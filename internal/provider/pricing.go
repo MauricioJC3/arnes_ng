@@ -15,9 +15,10 @@ var priceTable = map[string][2]float64{
 	"claude-haiku-4-5":  {1, 5},
 	"claude-fable-5":    {10, 50},
 
-	// DeepSeek (cache-miss rates)
-	"deepseek-chat":     {0.27, 1.10},
-	"deepseek-reasoner": {0.55, 2.19},
+	// DeepSeek V4 (peak, cache-miss input rates)
+	"deepseek-v4-flash":            {0.44, 1.32},
+	"deepseek-v4-pro":              {1.32, 3.96},
+	"deepseek-v4-flash-vision-exp": {0.44, 1.32},
 
 	// Kimi / Moonshot
 	"kimi-k2":          {0.60, 2.50},

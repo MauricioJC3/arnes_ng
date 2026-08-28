@@ -24,7 +24,7 @@ que lo envuelve.
 - **`/goal` (Ralph loop)**: itera autónomamente hacia un objetivo, re-enviando el
   mismo prompt cada vuelta. Corta cuando el modelo responde `ARNES_GOAL_DONE`, al
   llegar al límite de iteraciones (default 15, `/goal 5 <obj>`), si se estanca, o
-  con `Esc`. Conviene combinarlo con el modo `auto`. `/goal --fresh <obj>` usa un
+  con `Ctrl+C`. Conviene combinarlo con el modo `auto`. `/goal --fresh <obj>` usa un
   agente nuevo con contexto vacío cada iteración (estado en archivos/git) — más
   barato para runs largos.
 - **Reglas del proyecto**: si hay un `AGENTS.md` (o `agent.md` / `.arnes/agent.md`)
@@ -87,8 +87,11 @@ Desde el fuente: `make install` (usa `go install`) o `make build` (deja `./arnes
 make build      # compila ./arnes  (go run recompila cada vez)
 ./arnes         # arranca la TUI
 
-# primera vez: elegí proveedor, modelo y API key
-/connect        # abre el picker interactivo
+# primera vez: elegí proveedor, API key y modelo
+/connect        # picker interactivo: proveedor → API key → modelo
+                # el menú de modelos se trae en vivo del proveedor (endpoint /models);
+                # si falla la red o la key, cae a una lista local. Incluye
+                # "escribir a mano" para ids que todavía no estén en la lista.
 ```
 
 La config queda en `~/.arnes/config.json` (permisos `0600`, tiene API keys).
@@ -120,9 +123,10 @@ autocompletado.
 
 ### Teclas (TUI)
 
-`Enter` enviar · `Esc` cancelar el turno en curso · `shift+tab` ciclar modo ·
+`Enter` enviar · `Ctrl+C` cancelar el turno en curso (o limpiar el input) ·
+`Esc` dos veces para salir · `shift+tab` ciclar modo ·
 `↑↓` recuperar mensajes previos (input vacío) o scroll si no hay historial ·
-`PgUp/PgDn` `Ctrl+U/Ctrl+D` `Home/End` scroll · `Ctrl+C` salir.
+`PgUp/PgDn` `Ctrl+U/Ctrl+D` `Home/End` scroll.
 
 ## Estructura
 

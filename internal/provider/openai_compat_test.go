@@ -299,3 +299,57 @@ func TestOpenAICompatConstructors(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenAICompatListModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Errorf("path = %q, quiero /models", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			t.Errorf("Authorization = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"object":"list","data":[
+			{"id":"deepseek-v4-pro"},{"id":"deepseek-v4-flash"},{"id":""}
+		]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	oc := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, APIKey: "test-key", Model: "x"})
+	got, err := oc.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	// ordenado y sin el id vacío
+	if len(got) != 2 || got[0] != "deepseek-v4-flash" || got[1] != "deepseek-v4-pro" {
+		t.Fatalf("modelos = %v", got)
+	}
+}
+
+func TestOpenAICompatListModelsHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":{"message":"bad key"}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	oc := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, APIKey: "nope", Model: "x"})
+	if _, err := oc.ListModels(context.Background()); err == nil {
+		t.Fatal("una respuesta 401 debería devolver error")
+	}
+}
+
+func TestIsOpenAIChatModel(t *testing.T) {
+	keep := []string{"gpt-4o", "gpt-4.1-mini", "chatgpt-4o-latest", "o1", "o1-mini", "o3-mini", "o4-mini"}
+	drop := []string{"text-embedding-3-small", "whisper-1", "dall-e-3", "tts-1", "omni-moderation-latest"}
+	for _, id := range keep {
+		if !isOpenAIChatModel(id) {
+			t.Errorf("%q debería quedar", id)
+		}
+	}
+	for _, id := range drop {
+		if isOpenAIChatModel(id) {
+			t.Errorf("%q debería descartarse", id)
+		}
+	}
+}

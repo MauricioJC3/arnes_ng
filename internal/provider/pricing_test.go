@@ -9,8 +9,8 @@ func TestPrice(t *testing.T) {
 	if in, out, ok := Price("claude-opus-5"); !ok || in != 5 || out != 25 {
 		t.Fatalf("opus-5 = %v/%v ok=%v", in, out, ok)
 	}
-	if in, out, ok := Price("  DeepSeek-Chat  "); !ok || in != 0.27 || out != 1.10 {
-		t.Fatalf("deepseek-chat (con espacios/mayúsculas) = %v/%v ok=%v", in, out, ok)
+	if in, out, ok := Price("  DeepSeek-V4-Flash  "); !ok || in != 0.44 || out != 1.32 {
+		t.Fatalf("deepseek-v4-flash (con espacios/mayúsculas) = %v/%v ok=%v", in, out, ok)
 	}
 	if _, _, ok := Price("modelo-fantasma"); ok {
 		t.Fatal("un modelo desconocido no debería tener precio")

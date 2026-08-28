@@ -9,6 +9,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -75,6 +76,65 @@ func (o *OpenAICompat) SetModel(model string) {
 	if model != "" {
 		o.model = model
 	}
+}
+
+// ListModels calls GET /models and returns the model ids. OpenAI's own endpoint
+// also returns embedding, audio, image and moderation models, so for that base
+// URL the list is filtered to the chat-capable families; the other providers
+// return a short list that is passed through as-is. Results are sorted.
+func (o *OpenAICompat) ListModels(ctx context.Context) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.baseURL+"/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	if o.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+o.apiKey)
+	}
+
+	resp, err := o.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("openai_compat: no se pudo leer la lista de modelos: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("openai_compat: HTTP %d: %s", resp.StatusCode, truncate(raw, 200))
+	}
+
+	var parsed struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("openai_compat: lista de modelos ilegible: %w", err)
+	}
+
+	filter := o.baseURL == OpenAIBaseURL
+	ids := make([]string, 0, len(parsed.Data))
+	for _, m := range parsed.Data {
+		if m.ID == "" || (filter && !isOpenAIChatModel(m.ID)) {
+			continue
+		}
+		ids = append(ids, m.ID)
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+// isOpenAIChatModel keeps the model families that work with /chat/completions
+// and drops everything else OpenAI's /models returns.
+func isOpenAIChatModel(id string) bool {
+	for _, p := range []string{"gpt-", "chatgpt-", "o1", "o3", "o4-"} {
+		if strings.HasPrefix(id, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // retry tuning (package vars so tests can shrink the backoff).

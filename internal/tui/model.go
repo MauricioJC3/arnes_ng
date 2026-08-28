@@ -32,6 +32,9 @@ type Config struct {
 	Notices   chan string // out-of-band lines (e.g. "update available"); nil to disable
 	Theme     Theme
 	Greeting  string
+	// ListModels fetches a provider's model list for the /connect picker; nil
+	// falls back to the offline list.
+	ListModels ListModelsFunc
 }
 
 // runResult carries the outcome of one agent turn (or goal run) back to Update.
@@ -87,19 +90,21 @@ type Model struct {
 	width, height int
 	ready         bool
 
-	entries  []entry
-	live     string // streamed text for the current turn, not yet committed
-	busy     bool
-	pending  *approval.Request
-	menu     commandMenu
-	connect  *connectForm
-	quitting bool
+	entries    []entry
+	live       string // streamed text for the current turn, not yet committed
+	busy       bool
+	pending    *approval.Request
+	menu       commandMenu
+	connect    *connectForm
+	listModels ListModelsFunc
+	quitting   bool
+	quitHint   bool // first Esc arms the "Esc again to quit" prompt
 
 	history []string // submitted inputs, for ↑/↓ recall
 	histAt  int      // index into history; len(history) == showing the draft
 	draft   string   // the input the user was typing before recalling
 
-	goalCh           chan goalStepMsg
+	goalCh            chan goalStepMsg
 	goalIter, goalMax int // >0 while a /goal loop is running
 
 	approvals chan approval.Request
@@ -117,7 +122,7 @@ func New(cfg Config) Model {
 	styles := cfg.Theme.Styles()
 
 	ta := textarea.New()
-	ta.Placeholder = "escribí un mensaje…  (/help · Ctrl+C para salir)"
+	ta.Placeholder = "escribí un mensaje…  (/help · Esc Esc para salir)"
 	ta.Prompt = styles.Accent.Render("❯ ")
 	ta.ShowLineNumbers = false
 	ta.SetHeight(3)
@@ -127,20 +132,21 @@ func New(cfg Config) Model {
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(styles.Accent))
 
 	m := Model{
-		conv:      cfg.Conv,
-		prov:      cfg.Provider,
-		sessionID: cfg.SessionID,
-		stats:     cfg.Stats,
-		cost:      cfg.Cost,
-		theme:     cfg.Theme,
-		styles:    styles,
-		ta:        ta,
-		sp:        sp,
-		approvals: cfg.Approvals,
-		deltas:    cfg.Deltas,
-		notices:   cfg.Notices,
-		results:   make(chan runResult, 1),
-		goalCh:    make(chan goalStepMsg, 4),
+		conv:       cfg.Conv,
+		prov:       cfg.Provider,
+		sessionID:  cfg.SessionID,
+		stats:      cfg.Stats,
+		cost:       cfg.Cost,
+		theme:      cfg.Theme,
+		styles:     styles,
+		ta:         ta,
+		sp:         sp,
+		approvals:  cfg.Approvals,
+		deltas:     cfg.Deltas,
+		notices:    cfg.Notices,
+		listModels: cfg.ListModels,
+		results:    make(chan runResult, 1),
+		goalCh:     make(chan goalStepMsg, 4),
 	}
 	if cfg.Greeting != "" {
 		m.entries = append(m.entries, entry{kind: kindInfo, text: cfg.Greeting})
@@ -183,17 +189,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, c
 
 	case tea.KeyMsg:
-		if msg.String() == "ctrl+c" {
-			m.quitting = true
-			return m, tea.Quit
+		k := msg.String()
+
+		// Any key other than a lone Esc disarms the "Esc again to quit" prompt.
+		if k != "esc" {
+			m.quitHint = false
+		}
+
+		// Ctrl+C never quits. It cancels whatever is in progress -- a running
+		// turn, the /connect form, the command menu, a pending approval -- or
+		// clears a half-typed message.
+		if k == "ctrl+c" {
+			return m.cancelWithCtrlC()
 		}
 
 		if m.connect != nil {
-			return m.driveConnectForm(msg), nil
+			return m.driveConnectForm(msg)
 		}
 
 		if m.menu.open {
-			switch msg.String() {
+			switch k {
 			case "up", "ctrl+p":
 				m.menu.move(-1)
 				return m, nil
@@ -213,11 +228,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Esc while a turn is running cancels it (without quitting the app).
-		if msg.String() == "esc" && m.busy && m.pending == nil {
-			if m.cancel != nil {
-				m.cancel()
+		// Esc is the way out of the app, but only on a second press so it is
+		// never an accident. It still just answers a pending approval, and it
+		// does not quit mid-turn (Ctrl+C cancels the turn).
+		if k == "esc" {
+			if m.pending != nil {
+				return m.answerApproval(msg), nil
 			}
+			if m.busy {
+				return m, nil
+			}
+			if m.quitHint {
+				m.quitting = true
+				return m, tea.Quit
+			}
+			m.quitHint = true
 			return m, nil
 		}
 
@@ -302,6 +327,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case noticeMsg:
 		m.add(kindInfo, string(msg))
 		return m, waitForNotice(m.notices)
+
+	case connectModelsMsg:
+		if m.connect != nil {
+			m.connect.setModels(msg.models, msg.err)
+		}
+		return m, nil
 
 	case goalStepMsg:
 		// A new goal iteration is about to run: commit the previous one's text.
@@ -400,19 +431,26 @@ func (m *Model) remember(text string) {
 	m.draft = ""
 }
 
-// driveConnectForm feeds one key to the /connect picker and acts on the outcome.
-func (m Model) driveConnectForm(msg tea.KeyMsg) Model {
-	done, cancelled := m.connect.update(msg)
+// driveConnectForm feeds one key to the /connect picker and acts on the outcome:
+// a cancel, a request to fetch the model list, or a finished result.
+func (m Model) driveConnectForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	done, cancelled, fetch := m.connect.update(msg)
 	switch {
 	case cancelled:
 		m.connect = nil
 		m.add(kindInfo, "/connect cancelado")
+	case fetch:
+		if m.listModels == nil {
+			m.connect.setModels(nil, nil) // offline list only
+			return m, nil
+		}
+		return m, fetchConnectModels(m.listModels, m.connect.provider, m.connect.key)
 	case done != nil:
 		m.connect = nil
 		conn, ok := m.conv.(command.Connector)
 		if !ok {
 			m.add(kindError, "este arnés no soporta /connect")
-			return m
+			return m, nil
 		}
 		out, err := conn.Connect(done.provider, done.model, done.key)
 		if err != nil {
@@ -421,7 +459,7 @@ func (m Model) driveConnectForm(msg tea.KeyMsg) Model {
 			m.add(kindInfo, out)
 		}
 	}
-	return m
+	return m, nil
 }
 
 // submit handles Enter: a slash command runs synchronously; plain text starts an
@@ -473,7 +511,7 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 
 // startGoal kicks off a Ralph-style goal loop as a cancellable background turn.
 func (m Model) startGoal(req *command.GoalRequest) (tea.Model, tea.Cmd) {
-	m.add(kindInfo, "objetivo: "+req.Text+"  ·  Esc para cortar")
+	m.add(kindInfo, "objetivo: "+req.Text+"  ·  Ctrl+C para cortar")
 	m.busy = true
 	m.live = ""
 	m.ta.Blur()
@@ -498,6 +536,29 @@ func (m Model) startGoal(req *command.GoalRequest) (tea.Model, tea.Cmd) {
 		m.results <- runResult{goal: &rep, err: err}
 	}()
 	return m, tea.Batch(m.sp.Tick, waitForResult(m.results), waitForGoal(ch))
+}
+
+// cancelWithCtrlC handles Ctrl+C: cancel the in-flight work, or clear a
+// half-typed message. It never quits the app -- pressing Esc twice does that.
+func (m Model) cancelWithCtrlC() (tea.Model, tea.Cmd) {
+	switch {
+	case m.connect != nil:
+		m.connect = nil
+		m.add(kindInfo, "/connect cancelado")
+	case m.pending != nil:
+		return m.answerApproval(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}), nil
+	case m.menu.open:
+		m.menu = commandMenu{}
+	case m.busy:
+		if m.cancel != nil {
+			m.cancel()
+		}
+	case m.ta.Value() != "":
+		m.ta.SetValue("")
+		m.menu.update("")
+		m.histAt = len(m.history)
+	}
+	return m, nil
 }
 
 // answerApproval consumes a y/n keypress while a tool call is pending.

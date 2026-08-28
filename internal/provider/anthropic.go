@@ -33,6 +33,22 @@ func NewAnthropic(opts ...option.RequestOption) *Anthropic {
 
 func (a *Anthropic) Model() string { return a.model }
 
+// ListModels returns the model ids available to the account, newest first (the
+// order the API returns them in).
+func (a *Anthropic) ListModels(ctx context.Context) ([]string, error) {
+	var ids []string
+	iter := a.client.Models.ListAutoPaging(ctx, anthropic.ModelListParams{})
+	for iter.Next() {
+		if id := iter.Current().ID; id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("anthropic: %w", err)
+	}
+	return ids, nil
+}
+
 func (a *Anthropic) SetModel(model string) {
 	if model != "" {
 		a.model = model

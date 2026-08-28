@@ -271,6 +271,9 @@ func run() error {
 			Notices:   notices,
 			Theme:     theme,
 			Greeting:  summary,
+			ListModels: func(ctx context.Context, providerName, apiKey string) ([]string, error) {
+				return listModels(ctx, mergeEnvKeys(startup), providerName, apiKey)
+			},
 		})
 	}
 
@@ -786,6 +789,28 @@ func mergeEnvKeys(cfg config.Config) config.Config {
 	return out
 }
 
+// listModels builds a throwaway provider for providerName -- using apiKey, or
+// the key already known in base when apiKey is empty -- and asks it for the
+// model ids it can serve. Used by the /connect picker.
+func listModels(ctx context.Context, base config.Config, providerName, apiKey string) ([]string, error) {
+	keys := map[string]string{}
+	for k, v := range base.Keys {
+		keys[k] = v
+	}
+	if apiKey != "" {
+		keys[providerName] = apiKey
+	}
+	p, _, err := providerFromConfig(config.Config{Provider: providerName, Keys: keys})
+	if err != nil {
+		return nil, err
+	}
+	lister, ok := p.(provider.ModelLister)
+	if !ok {
+		return nil, fmt.Errorf("%s no permite listar modelos", providerName)
+	}
+	return lister.ListModels(ctx)
+}
+
 // providerFromConfig builds the provider named by cfg.Provider (default
 // anthropic), using cfg.Model and cfg.Keys. Model defaults are placeholders --
 // change them with /model or /connect.
@@ -806,7 +831,7 @@ func providerFromConfig(cfg config.Config) (provider.Provider, string, error) {
 		}
 		return p, name, nil
 	case "deepseek":
-		return provider.NewDeepSeek(key("deepseek"), cmp.Or(model, "deepseek-chat")), name, nil
+		return provider.NewDeepSeek(key("deepseek"), cmp.Or(model, "deepseek-v4-flash")), name, nil
 	case "kimi":
 		return provider.NewKimi(key("kimi"), cmp.Or(model, "moonshot-v1-8k")), name, nil
 	case "openai":

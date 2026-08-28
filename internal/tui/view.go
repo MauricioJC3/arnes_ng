@@ -92,7 +92,7 @@ func (m Model) View() string {
 	case m.pending != nil:
 		foot = m.approvalBox()
 	case m.busy:
-		foot = m.inputBox(m.styles.Muted.Render(m.sp.View() + " pensando…   " + m.styles.Muted.Render("Esc para cancelar")))
+		foot = m.inputBox(m.styles.Muted.Render(m.sp.View() + " pensando…   " + m.styles.Muted.Render("Ctrl+C para cancelar")))
 	default:
 		box := m.inputBox(m.ta.View())
 		if m.menu.open {
@@ -197,6 +197,9 @@ func (m Model) statusBar() string {
 		seg = append(seg, m.sp.View()+" trabajando")
 	} else if !m.vp.AtBottom() {
 		seg = append(seg, "▼ ↑↓/PgUp para ver más")
+	}
+	if m.quitHint {
+		seg = append(seg, m.styles.Error.Render("Esc de nuevo para salir"))
 	}
 
 	rule := m.styles.Border.Render(strings.Repeat("─", max(m.width, 1)))

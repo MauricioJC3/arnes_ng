@@ -91,3 +91,10 @@ type Provider interface {
 type Streamer interface {
 	StreamMessage(ctx context.Context, req Request, onDelta func(delta string)) (Response, error)
 }
+
+// ModelLister is an optional Provider capability: enumerate the model ids the
+// configured account can use. Providers that cannot list models omit it, and
+// callers fall back to a static list.
+type ModelLister interface {
+	ListModels(ctx context.Context) ([]string, error)
+}

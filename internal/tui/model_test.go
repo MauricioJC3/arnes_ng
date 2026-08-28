@@ -479,7 +479,7 @@ func (c *blockingConv) Run(ctx context.Context, _ string) (string, error) {
 	return "", ctx.Err()
 }
 
-func TestModelEscInterruptsTurn(t *testing.T) {
+func TestModelCtrlCInterruptsTurn(t *testing.T) {
 	c := &blockingConv{started: make(chan struct{})}
 	appr := make(chan approval.Request)
 	m := New(Config{Conv: c, Provider: provider.NewMock(),
@@ -500,7 +500,14 @@ func TestModelEscInterruptsTurn(t *testing.T) {
 		t.Fatal("la goroutine del agente no arrancó")
 	}
 
-	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	// Esc no corta el turno; Ctrl+C sí.
+	tm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = tm.(Model)
+	if cmd != nil || m.quitting {
+		t.Fatal("Esc no debería hacer nada mientras hay un turno en curso")
+	}
+
+	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	m = tm.(Model)
 
 	select {
@@ -519,6 +526,133 @@ func TestModelEscInterruptsTurn(t *testing.T) {
 	}
 	if !strings.Contains(plain(m), "interrumpido") {
 		t.Fatalf("no se mostró el aviso de interrupción:\n%s", plain(m))
+	}
+}
+
+func TestModelEscTwiceQuits(t *testing.T) {
+	m, _ := newModel(t, &fakeConv{})
+
+	tm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = tm.(Model)
+	if m.quitting || cmd != nil {
+		t.Fatal("el primer Esc no debería salir")
+	}
+	if !m.quitHint {
+		t.Fatal("el primer Esc debería armar el aviso de salida")
+	}
+
+	tm, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = tm.(Model)
+	if !m.quitting || cmd == nil {
+		t.Fatal("el segundo Esc debería salir")
+	}
+}
+
+func TestModelKeyDisarmsQuitHint(t *testing.T) {
+	m, _ := newModel(t, &fakeConv{})
+
+	tm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = tm.(Model)
+	if !m.quitHint {
+		t.Fatal("Esc debería armar el aviso")
+	}
+
+	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	m = tm.(Model)
+	if m.quitHint {
+		t.Fatal("cualquier otra tecla debería desarmar el aviso")
+	}
+
+	tm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = tm.(Model)
+	if m.quitting || cmd != nil {
+		t.Fatal("tras desarmar, un solo Esc no debería salir")
+	}
+}
+
+// connectFake is a fakeConv that also records a /connect call.
+type connectFake struct {
+	fakeConv
+	gotProvider, gotModel, gotKey string
+}
+
+func (c *connectFake) Connect(provider, model, key string) (string, error) {
+	c.gotProvider, c.gotModel, c.gotKey = provider, model, key
+	return "conectado", nil
+}
+
+func TestModelConnectFlowUsesLiveModels(t *testing.T) {
+	conv := &connectFake{}
+	var gotProvider, gotKey string
+	m := New(Config{
+		Conv:      conv,
+		Provider:  provider.NewMock(),
+		SessionID: func() string { return "s" },
+		Approvals: make(chan approval.Request),
+		Theme:     DefaultTheme(),
+		ListModels: func(_ context.Context, p, k string) ([]string, error) {
+			gotProvider, gotKey = p, k
+			return []string{"m-one", "m-two"}, nil
+		},
+	})
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = tm.(Model)
+
+	m.ta.SetValue("/connect")
+	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = tm.(Model)
+	if m.connect == nil {
+		t.Fatal("no se abrió el formulario /connect")
+	}
+
+	// proveedor por defecto (anthropic) -> paso key
+	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = tm.(Model)
+
+	for _, r := range "sk-abc" {
+		tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = tm.(Model)
+	}
+	tm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = tm.(Model)
+	if cmd == nil {
+		t.Fatal("enter en la key debería devolver el Cmd de búsqueda")
+	}
+	cm, ok := cmd().(connectModelsMsg)
+	if !ok {
+		t.Fatal("el Cmd no devolvió connectModelsMsg")
+	}
+	if gotProvider != "anthropic" || gotKey != "sk-abc" {
+		t.Fatalf("ListModels recibió provider=%q key=%q", gotProvider, gotKey)
+	}
+
+	tm, _ = m.Update(cm)
+	m = tm.(Model)
+	if m.connect.loading || len(m.connect.models) != 3 { // m-one, m-two, manual
+		t.Fatalf("picker no cargó: loading=%v models=%v", m.connect.loading, m.connect.models)
+	}
+
+	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = tm.(Model)
+	if m.connect != nil {
+		t.Fatal("el formulario debería cerrarse tras elegir el modelo")
+	}
+	if conv.gotProvider != "anthropic" || conv.gotModel != "m-one" || conv.gotKey != "sk-abc" {
+		t.Fatalf("Connect recibió %q/%q/%q", conv.gotProvider, conv.gotModel, conv.gotKey)
+	}
+}
+
+func TestModelCtrlCClearsInput(t *testing.T) {
+	m, _ := newModel(t, &fakeConv{})
+	m.ta.SetValue("mensaje a medio escribir")
+
+	tm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = tm.(Model)
+	if m.quitting || cmd != nil {
+		t.Fatal("Ctrl+C no debería salir de la app")
+	}
+	if m.ta.Value() != "" {
+		t.Fatalf("Ctrl+C no limpió el input: %q", m.ta.Value())
 	}
 }
 
