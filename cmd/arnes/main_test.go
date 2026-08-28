@@ -276,6 +276,40 @@ func TestAppModes(t *testing.T) {
 	}
 }
 
+func TestParseMode(t *testing.T) {
+	cases := map[string]string{
+		"": modeNormal, "normal": modeNormal, "NORMAL": modeNormal,
+		"auto": modeAuto, "bypass": modeAuto, "yolo": modeAuto, " Auto ": modeAuto,
+		"plan": modePlan,
+	}
+	for in, want := range cases {
+		got, err := parseMode(in)
+		if err != nil || got != want {
+			t.Errorf("parseMode(%q) = %q, %v; quiero %q", in, got, err, want)
+		}
+	}
+	if _, err := parseMode("marciano"); err == nil {
+		t.Fatal("esperaba error con un modo inválido")
+	}
+}
+
+func TestSetModePersists(t *testing.T) {
+	a := newTestApp(t)
+	if _, err := a.NewSession(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.SetMode("auto"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.Load(a.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Mode != "auto" {
+		t.Fatalf("el modo no se guardó en la config: %q", got.Mode)
+	}
+}
+
 func TestAppSetStrategy(t *testing.T) {
 	a := newTestApp(t)
 	if _, err := a.NewSession(); err != nil {

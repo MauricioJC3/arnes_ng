@@ -14,6 +14,7 @@ import (
 type Config struct {
 	Provider   string            `json:"provider,omitempty"`
 	Model      string            `json:"model,omitempty"`
+	Mode       string            `json:"mode,omitempty"` // permission mode: normal | auto | plan
 	Keys       map[string]string `json:"keys,omitempty"` // provider name -> api key
 	AutoUpdate bool              `json:"auto_update,omitempty"`
 }

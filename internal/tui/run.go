@@ -32,20 +32,21 @@ type Options struct {
 // Run starts the full-screen program and blocks until the user quits.
 func Run(o Options) error {
 	m := New(Config{
-		Conv:       o.Conv,
-		Provider:   o.Provider,
-		ProviderFn: o.ProviderFn,
-		SessionID:  o.SessionID,
-		Stats:      o.Stats,
-		Cost:       o.Cost,
-		Approvals:  o.Approvals,
-		Deltas:     o.Deltas,
-		Notices:    o.Notices,
-		Todos:      o.Todos,
-		Theme:      o.Theme,
-		Greeting:   o.Greeting,
-		ListModels: o.ListModels,
-		MouseOn:    mouseEnabled(),
+		Conv:          o.Conv,
+		Provider:      o.Provider,
+		ProviderFn:    o.ProviderFn,
+		SessionID:     o.SessionID,
+		Stats:         o.Stats,
+		Cost:          o.Cost,
+		Approvals:     o.Approvals,
+		Deltas:        o.Deltas,
+		Notices:       o.Notices,
+		Todos:         o.Todos,
+		Theme:         o.Theme,
+		Greeting:      o.Greeting,
+		ListModels:    o.ListModels,
+		MouseOn:       mouseEnabled(),
+		MarkdownStyle: markdownStyle(),
 	})
 	opts := []tea.ProgramOption{tea.WithAltScreen()}
 	if mouseEnabled() {
@@ -68,4 +69,15 @@ func mouseEnabled() bool {
 	default:
 		return false
 	}
+}
+
+// markdownStyle is the glamour theme for rendered assistant text. It is never
+// "auto": auto-detection queries the terminal over stdin and races the TUI for
+// input, leaking the reply into the prompt. ARNES_MD_STYLE overrides; default
+// "dark".
+func markdownStyle() string {
+	if s := strings.ToLower(strings.TrimSpace(os.Getenv("ARNES_MD_STYLE"))); s != "" && s != "auto" {
+		return s
+	}
+	return "dark"
 }

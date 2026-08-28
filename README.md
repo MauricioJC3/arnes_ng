@@ -18,9 +18,13 @@ que lo envuelve.
   (reemplazo quirúrgico), y memoria persistente por proyecto (`remember` / `recall`).
 - **Eficiencia**: prompt caching en Anthropic (`cache_control` en system + tools +
   prefijo del historial) y retry con backoff ante 429/5xx.
-- **Gateway de aprobación**: nada se ejecuta sin un sí. Denegar no rompe el bucle.
-- **Modos de permisos**: `normal` (pregunta), `auto` (ejecuta todo), `plan`
-  (solo lectura, el modelo propone un plan). Se ciclan con `shift+tab`.
+- **Gateway de aprobación**: nada que escriba o ejecute corre sin un sí. Denegar
+  no rompe el bucle. Las tools de solo lectura (`read_file`, `grep`, `glob`,
+  `lsp`, `recall`, `skill`) no piden confirmación ni en modo `normal`.
+- **Modos de permisos**: `normal` (pregunta por escrituras y comandos), `auto`
+  (ejecuta todo), `plan` (solo lectura, el modelo propone un plan). Se ciclan con
+  `shift+tab`; `/mode <x>` lo fija y lo guarda en la config. Al arrancar:
+  `ARNES_MODE` → `mode` de la config → `normal`.
 - **`/goal` (Ralph loop)**: itera autónomamente hacia un objetivo, re-enviando el
   mismo prompt cada vuelta. Corta cuando el modelo responde `ARNES_GOAL_DONE`, al
   llegar al límite de iteraciones (default 15, `/goal 5 <obj>`), si se estanca, o
@@ -133,6 +137,8 @@ Las variables ganan sobre el archivo de config.
 |---|---|
 | `ARNES_PROVIDER` | `anthropic` (default) `\|` `deepseek` `\|` `kimi` `\|` `openai` |
 | `ARNES_MODEL` | override del modelo |
+| `ARNES_MODE` | modo de permisos al arrancar: `normal` (default) `\|` `auto` `\|` `plan` |
+| `ARNES_MD_STYLE` | estilo glamour del markdown (`dark` default; `light`, etc). `auto` se ignora: consulta el terminal y ensucia el input |
 | `ARNES_UI` | `tui` (default) `\|` `plain` |
 | `ARNES_STREAM` | `off` para desactivar el streaming en la TUI |
 | `ARNES_MOUSE` | `on` para capturar el mouse (rueda de scroll; deshabilita la selección de texto del terminal). Por defecto OFF; `Ctrl+O` lo alterna en vivo |

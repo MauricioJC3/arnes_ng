@@ -7,13 +7,17 @@ import (
 )
 
 func TestSafe(t *testing.T) {
-	s := NewSafe(DenyAll{}, "todo_write")
+	s := NewSafe(DenyAll{}, "todo_write", "read_file", "grep")
 
-	if !s.Confirm(provider.ToolCall{Name: "todo_write"}) {
-		t.Error("todo_write debería auto-aprobarse")
+	for _, ok := range []string{"todo_write", "read_file", "grep"} {
+		if !s.Confirm(provider.ToolCall{Name: ok}) {
+			t.Errorf("%s debería auto-aprobarse", ok)
+		}
 	}
-	if s.Confirm(provider.ToolCall{Name: "bash"}) {
-		t.Error("bash debería caer en el Inner (DenyAll)")
+	for _, gated := range []string{"bash", "write_file", "edit_file", "remember"} {
+		if s.Confirm(provider.ToolCall{Name: gated}) {
+			t.Errorf("%s debería caer en el Inner (DenyAll)", gated)
+		}
 	}
 
 	s2 := NewSafe(AllowAll{}, "todo_write")

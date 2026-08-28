@@ -28,17 +28,18 @@ type Config struct {
 	Provider provider.Provider
 	// ProviderFn returns the live provider. It wins over Provider and must be
 	// used by anything that can change after /connect (status bar, /model).
-	ProviderFn func() provider.Provider
-	SessionID  func() string // read live: it changes with /new and /resume
-	Stats      func() int    // estimated context tokens; nil to hide
-	Cost       func() string // running session cost, e.g. "$0.0421"; nil/"" hides it
-	Approvals  chan approval.Request
-	Deltas     chan string      // streamed text chunks; nil when streaming is off
-	Notices    chan string      // out-of-band lines (e.g. "update available"); nil to disable
-	Todos      chan []todo.Item // live task checklist; nil to disable the panel
-	MouseOn    bool             // whether the mouse was captured at startup (Ctrl+O toggles)
-	Theme      Theme
-	Greeting   string
+	ProviderFn    func() provider.Provider
+	SessionID     func() string // read live: it changes with /new and /resume
+	Stats         func() int    // estimated context tokens; nil to hide
+	Cost          func() string // running session cost, e.g. "$0.0421"; nil/"" hides it
+	Approvals     chan approval.Request
+	Deltas        chan string      // streamed text chunks; nil when streaming is off
+	Notices       chan string      // out-of-band lines (e.g. "update available"); nil to disable
+	Todos         chan []todo.Item // live task checklist; nil to disable the panel
+	MouseOn       bool             // whether the mouse was captured at startup (Ctrl+O toggles)
+	MarkdownStyle string           // glamour style name ("dark" default); never "auto" (queries the terminal)
+	Theme         Theme
+	Greeting      string
 	// ListModels fetches a provider's model list for the /connect picker; nil
 	// falls back to the offline list.
 	ListModels ListModelsFunc
@@ -109,8 +110,9 @@ type Model struct {
 	model      *modelForm
 	listModels ListModelsFunc
 	quitting   bool
-	quitHint   bool // first Esc arms the "Esc again to quit" prompt
-	mouseOn    bool // mouse capture state; Ctrl+O toggles it (off = terminal text selection)
+	quitHint   bool   // first Esc arms the "Esc again to quit" prompt
+	mouseOn    bool   // mouse capture state; Ctrl+O toggles it (off = terminal text selection)
+	mdStyle    string // glamour style name for rendered markdown
 
 	history []string // submitted inputs, for ↑/↓ recall
 	histAt  int      // index into history; len(history) == showing the draft
@@ -166,6 +168,7 @@ func New(cfg Config) Model {
 		notices:    cfg.Notices,
 		todos:      cfg.Todos,
 		mouseOn:    cfg.MouseOn,
+		mdStyle:    cfg.MarkdownStyle,
 		listModels: cfg.ListModels,
 		results:    make(chan runResult, 1),
 		goalCh:     make(chan goalStepMsg, 4),
@@ -720,7 +723,14 @@ func (m *Model) markdown(s string) string {
 		w = 20
 	}
 	if m.md == nil || m.mdWidth != w {
-		r, err := glamour.NewTermRenderer(glamour.WithAutoStyle(), glamour.WithWordWrap(w))
+		style := m.mdStyle
+		if style == "" || style == "auto" {
+			// "auto" queries the terminal background over stdin, which races
+			// bubbletea for the event loop and leaks the OSC 11 reply into the
+			// input. Pick an explicit style instead.
+			style = "dark"
+		}
+		r, err := glamour.NewTermRenderer(glamour.WithStandardStyle(style), glamour.WithWordWrap(w))
 		if err != nil {
 			return s
 		}

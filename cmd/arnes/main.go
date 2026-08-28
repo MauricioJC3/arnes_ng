@@ -5,6 +5,7 @@
 //
 //	ARNES_PROVIDER      anthropic (default) | deepseek | kimi | openai
 //	ARNES_MODEL         optional model override for the chosen provider
+//	ARNES_MODE          permission mode at startup: normal (default) | auto | plan
 //	ARNES_RESUME        session id (or unique prefix) to resume on start
 //	ARNES_COMPACT       auto-compaction: off (default) | sliding | summarize
 //	ARNES_COMPACT_AT    token threshold for auto-compaction (default 120000)
@@ -198,6 +199,12 @@ func run() error {
 	uiMode := strings.ToLower(cmp.Or(os.Getenv("ARNES_UI"), "tui"))
 	streaming := uiMode == "tui" && !isFalsey(os.Getenv("ARNES_STREAM"))
 
+	// Permission mode: ARNES_MODE wins over the config file; default normal.
+	startMode, err := parseMode(cmp.Or(os.Getenv("ARNES_MODE"), cfg.Mode, modeNormal))
+	if err != nil {
+		return err
+	}
+
 	// A once-a-day background check for a newer release. It never blocks startup;
 	// the result (if any) is surfaced on notices.
 	notices := make(chan string, 1)
@@ -215,8 +222,11 @@ func run() error {
 	} else {
 		approver = approval.Prompt{In: stdin, Out: os.Stdout}
 	}
-	// todo_write only mutates the in-memory checklist, so it never needs a prompt.
-	approver = approval.NewSafe(approver, "todo_write")
+	// Read-only tools (and the in-memory checklist) never need a prompt in normal
+	// mode -- confirming every read_file is pure friction. Writes, bash and
+	// remember still go through approval.
+	approver = approval.NewSafe(approver,
+		"todo_write", "read_file", "grep", "glob", "recall", "lsp", "skill")
 
 	// The task checklist: the model keeps it via todo_write, the TUI renders it
 	// live. A buffered, latest-wins channel decouples the two goroutines.
@@ -243,7 +253,7 @@ func run() error {
 		cfgPath:       cfgPath,
 		store:         store,
 		baseApprover:  approver,
-		mode:          modeNormal,
+		mode:          startMode,
 		autoCompactor: autoCompactor,
 		compactAt:     compactAt,
 		streaming:     streaming,
@@ -628,18 +638,36 @@ func modeAddendum(mode string) string {
 // Mode implements command.Modes.
 func (a *app) Mode() string { return a.mode }
 
-// SetMode implements command.Modes: switch the permission mode and rebuild.
-func (a *app) SetMode(name string) (string, error) {
+// parseMode normalizes a permission-mode string (bypass/yolo are aliases for
+// auto). An empty string is normal.
+func parseMode(name string) (string, error) {
 	switch name = strings.ToLower(strings.TrimSpace(name)); name {
-	case modeNormal, modeAuto, modePlan:
+	case "", modeNormal:
+		return modeNormal, nil
+	case modeAuto, modePlan:
+		return name, nil
 	case "bypass", "yolo":
-		name = modeAuto
+		return modeAuto, nil
 	default:
 		return "", fmt.Errorf("modo desconocido: %q (normal|auto|plan)", name)
 	}
-	a.mode = name
+}
+
+// SetMode implements command.Modes: switch the permission mode, rebuild, and
+// persist the choice so it sticks across restarts.
+func (a *app) SetMode(name string) (string, error) {
+	mode, err := parseMode(name)
+	if err != nil {
+		return "", err
+	}
+	a.mode = mode
 	a.rebuild(a.sess, a.sess.Messages)
-	return "modo: " + name, nil
+
+	a.cfg.Mode = mode
+	if saveErr := a.cfg.Save(a.cfgPath); saveErr != nil {
+		return "modo: " + mode + " (no se pudo guardar en la config: " + saveErr.Error() + ")", nil
+	}
+	return "modo: " + mode, nil
 }
 
 // rebuild swaps in a fresh agent + persister for the given session/history.
