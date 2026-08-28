@@ -22,6 +22,11 @@ func recordingProvider(text string) (*provider.MockProvider, *[]provider.Request
 	return p, &seen
 }
 
+// countingApprover records how many times Confirm was called and always allows.
+type countingApprover struct{ n int }
+
+func (c *countingApprover) Confirm(provider.ToolCall) bool { c.n++; return true }
+
 func toolNames(defs []provider.ToolDef) []string {
 	out := make([]string, len(defs))
 	for i, d := range defs {
@@ -39,7 +44,7 @@ func mustInput(t *testing.T, agent, task string) json.RawMessage {
 // newDelegate wires a DelegateTool whose tool pool includes itself.
 func newDelegate(t *testing.T, p provider.Provider, defs *Registry, base *tool.Registry, opts ...Option) *DelegateTool {
 	t.Helper()
-	d := NewDelegateTool(defs, func() provider.Provider { return p }, nil, approval.AllowAll{}, opts...)
+	d := NewDelegateTool(defs, func() provider.Provider { return p }, nil, func() approval.Approver { return approval.AllowAll{} }, opts...)
 	d.tools = base.With(d)
 	return d
 }
@@ -116,6 +121,45 @@ func TestDelegateExecute(t *testing.T) {
 		}
 	})
 
+	t.Run("el approver se resuelve por llamada (respeta un cambio de modo)", func(t *testing.T) {
+		// Provider que pide una tool call y en el turno siguiente cierra.
+		mp := &provider.MockProvider{}
+		step := 0
+		mp.Handler = func(provider.Request) (provider.Response, error) {
+			if step++; step%2 == 1 {
+				return provider.Response{
+					ToolCalls:  []provider.ToolCall{{ID: "c1", Name: "read_file", Input: json.RawMessage(`{"path":"x"}`)}},
+					StopReason: provider.StopToolUse,
+				}, nil
+			}
+			return provider.Response{Text: "listo", StopReason: provider.StopEndTurn}, nil
+		}
+		defs := NewRegistry(Definition{Name: "r", System: "s", Tools: []string{"read_file"}})
+
+		cur := &countingApprover{}
+		d := NewDelegateTool(defs, func() provider.Provider { return mp }, nil,
+			func() approval.Approver { return cur })
+		d.tools = base.With(d)
+
+		if _, err := d.Execute(ctx, mustInput(t, "r", "leé x")); err != nil {
+			t.Fatal(err)
+		}
+		if cur.n != 1 {
+			t.Fatalf("el primer approver se consultó %d veces, quiero 1", cur.n)
+		}
+
+		// "Cambio de modo": la fn ahora devuelve otro approver. El delegate debe
+		// usar el nuevo, no el que capturó antes.
+		next := &countingApprover{}
+		cur = next
+		if _, err := d.Execute(ctx, mustInput(t, "r", "leé x de nuevo")); err != nil {
+			t.Fatal(err)
+		}
+		if next.n != 1 {
+			t.Fatalf("el approver nuevo se consultó %d veces, quiero 1", next.n)
+		}
+	})
+
 	t.Run("subagente desconocido es error", func(t *testing.T) {
 		d := newDelegate(t, provider.NewMock(), NewRegistry(), base)
 		if _, err := d.Execute(ctx, mustInput(t, "fantasma", "x")); err == nil {
@@ -138,7 +182,7 @@ func TestDelegateDescriptionListsSubagents(t *testing.T) {
 		Definition{Name: "test-writer", Description: "escribe tests"},
 	)
 	mock := provider.NewMock()
-	d := NewDelegateTool(defs, func() provider.Provider { return mock }, tool.NewRegistry(), approval.AllowAll{})
+	d := NewDelegateTool(defs, func() provider.Provider { return mock }, tool.NewRegistry(), func() approval.Approver { return approval.AllowAll{} })
 	desc := d.Description()
 	if !strings.Contains(desc, "research: explora código") || !strings.Contains(desc, "test-writer: escribe tests") {
 		t.Fatalf("Description no lista los subagentes:\n%s", desc)

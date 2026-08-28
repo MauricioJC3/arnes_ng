@@ -271,7 +271,8 @@ func run() error {
 		mcpTools = len(mgr.Tools())
 	}
 
-	delegate := subagent.NewDelegateTool(a.subagents, func() provider.Provider { return a.prov }, base, approver,
+	delegate := subagent.NewDelegateTool(a.subagents, func() provider.Provider { return a.prov }, base,
+		func() approval.Approver { return a.effectiveApprover() },
 		subagent.WithParentHistory(func() []provider.Message {
 			if a.ag == nil {
 				return nil

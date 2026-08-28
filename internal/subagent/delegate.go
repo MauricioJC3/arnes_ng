@@ -22,7 +22,7 @@ type DelegateTool struct {
 	defs       *Registry
 	providerFn func() provider.Provider // resolved per call so /connect is honored
 	tools      *tool.Registry
-	approver   approval.Approver
+	approverFn func() approval.Approver  // resolved per call so the current mode (auto/plan) is honored
 	history    func() []provider.Message // parent history, for InheritHistory
 	maxSteps   int
 }
@@ -45,11 +45,12 @@ func WithMaxSteps(n int) Option {
 	}
 }
 
-// NewDelegateTool builds the tool. providerFn is called per delegation so a
-// runtime /connect is picked up. tools is the pool subagents draw from; the
-// delegate tool itself is always excluded from a subagent's set.
-func NewDelegateTool(defs *Registry, providerFn func() provider.Provider, tools *tool.Registry, ap approval.Approver, opts ...Option) *DelegateTool {
-	d := &DelegateTool{defs: defs, providerFn: providerFn, tools: tools, approver: ap, maxSteps: 20}
+// NewDelegateTool builds the tool. providerFn and approverFn are called per
+// delegation so a runtime /connect and the current permission mode are picked
+// up. tools is the pool subagents draw from; the delegate tool itself is always
+// excluded from a subagent's set.
+func NewDelegateTool(defs *Registry, providerFn func() provider.Provider, tools *tool.Registry, approverFn func() approval.Approver, opts ...Option) *DelegateTool {
+	d := &DelegateTool{defs: defs, providerFn: providerFn, tools: tools, approverFn: approverFn, maxSteps: 20}
 	for _, o := range opts {
 		o(d)
 	}
@@ -114,7 +115,7 @@ func (d *DelegateTool) Execute(ctx context.Context, input json.RawMessage) (stri
 		opts = append(opts, agent.WithHistory(d.history()))
 	}
 
-	sub := agent.New(p, d.subagentTools(def), d.approver, opts...)
+	sub := agent.New(p, d.subagentTools(def), d.approverFn(), opts...)
 	out, err := sub.Run(ctx, in.Task)
 	if err != nil {
 		return "", fmt.Errorf("subagente %q: %w", def.Name, err)
