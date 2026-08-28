@@ -9,6 +9,7 @@
 //	ARNES_COMPACT       auto-compaction: off (default) | sliding | summarize
 //	ARNES_COMPACT_AT    token threshold for auto-compaction (default 120000)
 //	ARNES_SUBAGENTS     path to a subagents JSON file (default ~/.arnes/subagents.json)
+//	ARNES_SKILLS        path to the global skills directory (default ~/.arnes/skills)
 //	ARNES_MCP           path to an mcp.json file (default ~/.arnes/mcp.json)
 //	ARNES_HOOKS         path to a hooks.json file (default ~/.arnes/hooks.json)
 //	ARNES_LSP           path to an lsp.json file (default ~/.arnes/lsp.json)
@@ -53,6 +54,7 @@ import (
 	"github.com/MauricioJC3/arnes_ng/internal/repl"
 	"github.com/MauricioJC3/arnes_ng/internal/rules"
 	"github.com/MauricioJC3/arnes_ng/internal/session"
+	"github.com/MauricioJC3/arnes_ng/internal/skill"
 	"github.com/MauricioJC3/arnes_ng/internal/subagent"
 	"github.com/MauricioJC3/arnes_ng/internal/todo"
 	"github.com/MauricioJC3/arnes_ng/internal/tool"
@@ -105,6 +107,9 @@ Trabajás sobre el código del proyecto en el directorio actual.
   definición o hover (tipo/doc) de un símbolo. Después de editar, lsp con action "diagnostics"
   sobre el archivo es un chequeo rápido antes de correr toda la suite. Puede no estar
   configurado para el lenguaje del archivo.
+- skill: si la tarea coincide con un skill de la lista (la ves en la descripción de la tool),
+  invocá skill con su nombre ANTES de encararla y seguí esas instrucciones en lugar de tu
+  enfoque por defecto. Si ninguno aplica, no la uses.
 - remember / recall: memoria persistente entre sesiones, POR PROYECTO. Guardá decisiones,
   convenciones y datos del proyecto que no sean obvios del código, apenas los descubrís o el
   usuario los define — no esperes a que te lo pidan. Consultá con recall cuando el usuario haga
@@ -280,6 +285,12 @@ func run() error {
 	lspMgr := lsp.NewManager(lspCfg, cwd)
 	defer lspMgr.CloseAll()
 
+	skills, err := loadSkills(cwd)
+	if err != nil {
+		return err
+	}
+	skillReg := skill.NewRegistry(skills...)
+
 	// The base pool has every tool except delegate; the agent's registry is the
 	// base plus delegate. Subagents draw from the base only (no recursion).
 	base := tool.NewRegistry(
@@ -293,6 +304,7 @@ func run() error {
 		tool.LSP{Client: func(ctx context.Context, path string) (tool.LSPClient, error) {
 			return lspMgr.For(ctx, path)
 		}},
+		tool.Skill{Skills: skillReg},
 		tool.Remember{Store: mem},
 		tool.Recall{Store: mem},
 	)
@@ -335,8 +347,8 @@ func run() error {
 	if filepath.IsAbs(projLabel) { // no git remote: show just the folder name
 		projLabel = filepath.Base(projLabel)
 	}
-	summary := fmt.Sprintf("proveedor %s · modelo %s · modo %s · %s · sesión %s · compactación %s · subagentes %d · mcp %d tools · hooks %d · lsp %d · memoria %d [%s]",
-		a.providerName, prov.Model(), a.mode, rulesLabel, a.sess.ID, a.ag.CompactorName(), a.subagents.Len(), mcpTools, hookCount, lspMgr.Configured(), memCount, projLabel)
+	summary := fmt.Sprintf("proveedor %s · modelo %s · modo %s · %s · sesión %s · compactación %s · subagentes %d · skills %d · mcp %d tools · hooks %d · lsp %d · memoria %d [%s]",
+		a.providerName, prov.Model(), a.mode, rulesLabel, a.sess.ID, a.ag.CompactorName(), a.subagents.Len(), skillReg.Len(), mcpTools, hookCount, lspMgr.Configured(), memCount, projLabel)
 
 	if uiMode == "tui" {
 		theme, err := loadTheme()
@@ -426,6 +438,20 @@ func loadLSP() (lsp.Config, error) {
 		path = p
 	}
 	return lsp.LoadFile(path)
+}
+
+// loadSkills scans the project (<cwd>/.arnes/skills) and global (ARNES_SKILLS or
+// ~/.arnes/skills) skill directories.
+func loadSkills(cwd string) ([]skill.Skill, error) {
+	global := os.Getenv("ARNES_SKILLS")
+	if global == "" {
+		p, err := skill.DefaultDir()
+		if err != nil {
+			return nil, err
+		}
+		global = p
+	}
+	return skill.Load(skill.Dirs(cwd, global)...)
 }
 
 // loadSubagents reads the subagents config (ARNES_SUBAGENTS or the default

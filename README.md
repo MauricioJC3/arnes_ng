@@ -48,6 +48,10 @@ que lo envuelve.
 - **Compactación de contexto**: `none`, `sliding`, `summarize`, con umbral de tokens.
 - **Subagentes**: delegación a agentes especializados (`research`, `test-writer`),
   sin recursión.
+- **Skills**: archivos `SKILL.md` (mismo formato que Claude Code) en
+  `~/.arnes/skills/<nombre>/SKILL.md` y `<proyecto>/.arnes/skills/…` (el del
+  proyecto le gana al global). La tool `skill` le muestra al modelo los skills
+  disponibles y carga el cuerpo del que elija dentro del turno.
 - **MCP** (Model Context Protocol): conecta servidores MCP por stdio y expone sus
   herramientas como nativas.
 - **Todo tracking**: la tool `todo_write` mantiene la lista de tareas del trabajo
@@ -137,7 +141,7 @@ Las variables ganan sobre el archivo de config.
 | `ARNES_RESUME` | id (o prefijo) de sesión a reanudar al arrancar |
 | `ARNES_RULES` | ruta a un archivo de reglas del proyecto (default: `AGENTS.md` en el cwd) |
 | `ARNES_AUTO_UPDATE` | `on` para que el chequeo diario instale la versión nueva por su cuenta |
-| `ARNES_CONFIG` / `ARNES_THEME` / `ARNES_MCP` / `ARNES_SUBAGENTS` / `ARNES_HOOKS` / `ARNES_LSP` | rutas alternativas |
+| `ARNES_CONFIG` / `ARNES_THEME` / `ARNES_MCP` / `ARNES_SUBAGENTS` / `ARNES_HOOKS` / `ARNES_LSP` / `ARNES_SKILLS` | rutas alternativas |
 | `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY` / `MOONSHOT_API_KEY` / `OPENAI_API_KEY` | API keys por entorno |
 
 ### Comandos (slash)
@@ -168,6 +172,7 @@ del transcript si ya venís leyendo hacia arriba ·
 | `internal/memory` | memoria persistente por proyecto (`remember` / `recall`, digest al prompt) |
 | `internal/compact` | estrategias de compactación de contexto |
 | `internal/subagent` | definiciones de subagentes + `DelegateTool` |
+| `internal/skill` | carga de `SKILL.md` (frontmatter + body) + `Registry` |
 | `internal/mcp` | cliente MCP stdio (JSON-RPC 2.0) |
 | `internal/hook` | hooks pre/post tool call (`hooks.json`) |
 | `internal/todo` | checklist de la tarea actual (store + tool `todo_write`) |
