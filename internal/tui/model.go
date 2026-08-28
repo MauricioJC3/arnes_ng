@@ -5,6 +5,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -85,6 +86,7 @@ type Model struct {
 	approvals chan approval.Request
 	deltas    chan string
 	results   chan runResult
+	cancel    context.CancelFunc // cancels the in-flight agent turn
 
 	md      *glamour.TermRenderer
 	mdWidth int
@@ -185,6 +187,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Esc while a turn is running cancels it (without quitting the app).
+		if msg.String() == "esc" && m.busy && m.pending == nil {
+			if m.cancel != nil {
+				m.cancel()
+			}
+			return m, nil
+		}
+
 		switch msg.String() {
 		case "shift+tab":
 			return m.cycleMode(), nil
@@ -262,14 +272,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case runResult:
 		m.busy = false
-		// The result text is authoritative. Drop whatever partial state the live
-		// buffer is in and render the complete message.
-		m.live = ""
+		m.cancel = nil
 		switch {
+		case errors.Is(msg.err, context.Canceled):
+			// Keep whatever was streamed so far, then note the interruption.
+			m.commitLive()
+			m.add(kindInfo, "⨯ turno interrumpido")
 		case msg.err != nil:
+			m.live = ""
 			m.add(kindError, msg.err.Error())
-		case strings.TrimSpace(msg.text) != "":
-			m.add(kindAssistant, msg.text)
+		default:
+			// The result text is authoritative; drop the partial live buffer.
+			m.live = ""
+			if strings.TrimSpace(msg.text) != "" {
+				m.add(kindAssistant, msg.text)
+			}
 		}
 		m.setContent(true)
 		m.ta.Focus()
@@ -344,8 +361,10 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	m.live = ""
 	m.ta.Blur()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancel = cancel
 	go func() {
-		out, err := m.conv.Run(context.Background(), text)
+		out, err := m.conv.Run(ctx, text)
 		m.results <- runResult{text: out, err: err}
 	}()
 	return m, tea.Batch(m.sp.Tick, waitForResult(m.results))

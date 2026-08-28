@@ -13,8 +13,8 @@ que lo envuelve.
 
 - **Multi-proveedor** detrás de una interfaz común: Anthropic, DeepSeek, Kimi
   (Moonshot) y OpenAI. Se cambia en caliente con `/connect` y queda guardado.
-- **Herramientas base**: `bash`, `read_file`, `write_file`, y memoria persistente
-  (`remember` / `recall`).
+- **Herramientas base**: `bash`, `read_file`, `write_file`, `edit_file`
+  (reemplazo quirúrgico de texto), y memoria persistente (`remember` / `recall`).
 - **Gateway de aprobación**: nada se ejecuta sin un sí. Denegar no rompe el bucle.
 - **Modos de permisos**: `normal` (pregunta), `auto` (ejecuta todo), `plan`
   (solo lectura, el modelo propone un plan). Se ciclan con `shift+tab`.
@@ -62,6 +62,12 @@ Las variables ganan sobre el archivo de config.
 
 `/help` `/connect` `/mode` `/model` `/sessions` `/resume` `/new` `/compact`
 `/subagents` `/exit`. Escribí `/` en la TUI para el autocompletado.
+
+### Teclas (TUI)
+
+`Enter` enviar · `Esc` cancelar el turno en curso · `shift+tab` ciclar modo ·
+`↑↓` scroll (con el input vacío) · `PgUp/PgDn` `Ctrl+U/Ctrl+D` `Home/End` scroll ·
+`Ctrl+C` salir.
 
 ## Estructura
 

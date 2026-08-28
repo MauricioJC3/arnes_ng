@@ -92,7 +92,7 @@ func (m Model) View() string {
 	case m.pending != nil:
 		foot = m.approvalBox()
 	case m.busy:
-		foot = m.inputBox(m.styles.Muted.Render(m.sp.View() + " pensando…"))
+		foot = m.inputBox(m.styles.Muted.Render(m.sp.View() + " pensando…   " + m.styles.Muted.Render("Esc para cancelar")))
 	default:
 		box := m.inputBox(m.ta.View())
 		if m.menu.open {

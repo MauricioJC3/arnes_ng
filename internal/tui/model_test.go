@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -371,6 +372,58 @@ func TestModelUpDownScrollsWhenInputEmpty(t *testing.T) {
 	m = tm.(Model)
 	if !m.vp.AtBottom() {
 		t.Fatal("↑ con texto en el input no debería scrollear el viewport")
+	}
+}
+
+// blockingConv blocks in Run until its context is cancelled.
+type blockingConv struct{ started chan struct{} }
+
+func (c *blockingConv) Run(ctx context.Context, _ string) (string, error) {
+	close(c.started)
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+func TestModelEscInterruptsTurn(t *testing.T) {
+	c := &blockingConv{started: make(chan struct{})}
+	appr := make(chan approval.Request)
+	m := New(Config{Conv: c, Provider: provider.NewMock(),
+		SessionID: func() string { return "s" }, Approvals: appr, Theme: DefaultTheme()})
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = tm.(Model)
+
+	m.ta.SetValue("algo largo")
+	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = tm.(Model)
+	if !m.busy || m.cancel == nil {
+		t.Fatal("no arrancó el turno cancelable")
+	}
+
+	select {
+	case <-c.started:
+	case <-time.After(time.Second):
+		t.Fatal("la goroutine del agente no arrancó")
+	}
+
+	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = tm.(Model)
+
+	select {
+	case res := <-m.results:
+		if !errors.Is(res.err, context.Canceled) {
+			t.Fatalf("err = %v, quería context.Canceled", res.err)
+		}
+		tm, _ = m.Update(res)
+		m = tm.(Model)
+	case <-time.After(time.Second):
+		t.Fatal("Esc no canceló el turno")
+	}
+
+	if m.busy || m.cancel != nil {
+		t.Fatal("quedó en estado busy tras cancelar")
+	}
+	if !strings.Contains(plain(m), "interrumpido") {
+		t.Fatalf("no se mostró el aviso de interrupción:\n%s", plain(m))
 	}
 }
 

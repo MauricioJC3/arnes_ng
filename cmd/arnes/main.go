@@ -149,6 +149,7 @@ func run() error {
 		tool.Bash{Timeout: 30 * time.Second},
 		tool.ReadFile{},
 		tool.WriteFile{},
+		tool.EditFile{},
 		tool.Remember{Store: mem},
 		tool.Recall{Store: mem},
 	)
