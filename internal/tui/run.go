@@ -9,6 +9,7 @@ import (
 	"github.com/MauricioJC3/arnes_ng/internal/approval"
 	"github.com/MauricioJC3/arnes_ng/internal/command"
 	"github.com/MauricioJC3/arnes_ng/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/todo"
 )
 
 // Options bundles everything Run needs.
@@ -21,7 +22,8 @@ type Options struct {
 	Cost       func() string
 	Approvals  chan approval.Request
 	Deltas     chan string
-	Notices    chan string // out-of-band lines (e.g. "update available"); nil to disable
+	Notices    chan string      // out-of-band lines (e.g. "update available"); nil to disable
+	Todos      chan []todo.Item // live task checklist; nil to disable the panel
 	Theme      Theme
 	Greeting   string
 	ListModels ListModelsFunc // fetches a provider's model list for /connect; nil = offline list
@@ -39,6 +41,7 @@ func Run(o Options) error {
 		Approvals:  o.Approvals,
 		Deltas:     o.Deltas,
 		Notices:    o.Notices,
+		Todos:      o.Todos,
 		Theme:      o.Theme,
 		Greeting:   o.Greeting,
 		ListModels: o.ListModels,

@@ -8,10 +8,35 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/MauricioJC3/arnes_ng/internal/command"
+	"github.com/MauricioJC3/arnes_ng/internal/todo"
 )
 
-// footerRows is the height reserved for the input / approval / status area.
-func (m Model) footerRows() int { return m.ta.Height() + 2 /* border */ + 2 /* status */ }
+// maxTodoRows caps how many checklist rows the panel shows; the rest collapse
+// into a "+N más" line.
+const maxTodoRows = 8
+
+// footerRows is the height reserved for the input / approval / status area
+// (plus the task panel when there is one).
+func (m Model) footerRows() int {
+	rows := m.ta.Height() + 2 /* border */ + 2 /* status */
+	if n := m.visibleTodos(); n > 0 {
+		rows += n + 1 /* header */ + 2 /* border */
+	}
+	return rows
+}
+
+// visibleTodos is how many checklist rows the panel will render (0 when the
+// panel is disabled or empty).
+func (m Model) visibleTodos() int {
+	n := len(m.todoItems)
+	if m.todos == nil || n == 0 {
+		return 0
+	}
+	if n > maxTodoRows {
+		return maxTodoRows
+	}
+	return n
+}
 
 // relayout recomputes component sizes for the current terminal size.
 func (m *Model) relayout() {
@@ -103,7 +128,63 @@ func (m Model) View() string {
 		foot = box
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, m.vp.View(), m.statusBar(), foot)
+	parts := []string{m.vp.View(), m.statusBar()}
+	if p := m.todoPanel(); p != "" {
+		parts = append(parts, p)
+	}
+	parts = append(parts, foot)
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// todoPanel renders the current task checklist as a bordered box. It returns ""
+// when there is nothing to show.
+func (m Model) todoPanel() string {
+	n := m.visibleTodos()
+	if n == 0 {
+		return ""
+	}
+	done := 0
+	for _, it := range m.todoItems {
+		if it.Status == todo.Done {
+			done++
+		}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s  %s\n",
+		m.styles.Accent.Render("tareas"),
+		m.styles.Muted.Render(fmt.Sprintf("%d/%d", done, len(m.todoItems))))
+
+	truncated := len(m.todoItems) > n
+	shown := n
+	if truncated {
+		shown = n - 1
+	}
+	for _, it := range m.todoItems[:shown] {
+		b.WriteString(m.todoLine(it))
+		b.WriteByte('\n')
+	}
+	if truncated {
+		b.WriteString(m.styles.Muted.Render(fmt.Sprintf("  … +%d más", len(m.todoItems)-shown)))
+		b.WriteByte('\n')
+	}
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(m.theme.Border)).
+		Width(m.boxWidth()).
+		Render(strings.TrimRight(b.String(), "\n"))
+}
+
+func (m Model) todoLine(it todo.Item) string {
+	switch it.Status {
+	case todo.Done:
+		return m.styles.Success.Render("  ✔ ") + m.styles.Muted.Render(it.Content)
+	case todo.InProgress:
+		return m.styles.Accent.Render("  ▶ ") + m.styles.User.Render(it.Content)
+	default:
+		return m.styles.Muted.Render("  ☐ " + it.Content)
+	}
 }
 
 // menuView renders the "/…" autocomplete list.

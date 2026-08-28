@@ -18,6 +18,7 @@ import (
 	"github.com/MauricioJC3/arnes_ng/internal/command"
 	goalpkg "github.com/MauricioJC3/arnes_ng/internal/goal"
 	"github.com/MauricioJC3/arnes_ng/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/todo"
 )
 
 // Config is what Model needs from the rest of the harness.
@@ -32,8 +33,9 @@ type Config struct {
 	Stats      func() int    // estimated context tokens; nil to hide
 	Cost       func() string // running session cost, e.g. "$0.0421"; nil/"" hides it
 	Approvals  chan approval.Request
-	Deltas     chan string // streamed text chunks; nil when streaming is off
-	Notices    chan string // out-of-band lines (e.g. "update available"); nil to disable
+	Deltas     chan string      // streamed text chunks; nil when streaming is off
+	Notices    chan string      // out-of-band lines (e.g. "update available"); nil to disable
+	Todos      chan []todo.Item // live task checklist; nil to disable the panel
 	Theme      Theme
 	Greeting   string
 	// ListModels fetches a provider's model list for the /connect picker; nil
@@ -60,6 +62,9 @@ type deltaMsg string
 // noticeMsg is an out-of-band line to drop into the transcript (e.g. an
 // update-available note from the daily check).
 type noticeMsg string
+
+// todosMsg is the new state of the task checklist.
+type todosMsg []todo.Item
 
 // entryKind classifies a transcript line for styling.
 type entryKind int
@@ -115,6 +120,8 @@ type Model struct {
 	approvals chan approval.Request
 	deltas    chan string
 	notices   chan string
+	todos     chan []todo.Item
+	todoItems []todo.Item // current checklist; rendered as a panel above the input
 	results   chan runResult
 	cancel    context.CancelFunc // cancels the in-flight agent turn
 
@@ -155,6 +162,7 @@ func New(cfg Config) Model {
 		approvals:  cfg.Approvals,
 		deltas:     cfg.Deltas,
 		notices:    cfg.Notices,
+		todos:      cfg.Todos,
 		listModels: cfg.ListModels,
 		results:    make(chan runResult, 1),
 		goalCh:     make(chan goalStepMsg, 4),
@@ -173,6 +181,9 @@ func (m Model) Init() tea.Cmd {
 	}
 	if m.notices != nil {
 		cmds = append(cmds, waitForNotice(m.notices))
+	}
+	if m.todos != nil {
+		cmds = append(cmds, waitForTodos(m.todos))
 	}
 	return tea.Batch(cmds...)
 }
@@ -342,6 +353,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case noticeMsg:
 		m.add(kindInfo, string(msg))
 		return m, waitForNotice(m.notices)
+
+	case todosMsg:
+		m.todoItems = []todo.Item(msg)
+		m.relayout() // the panel's height may have changed; resize the viewport
+		return m, waitForTodos(m.todos)
 
 	case connectModelsMsg:
 		if m.connect != nil {
@@ -735,6 +751,10 @@ func waitForDelta(ch chan string) tea.Cmd {
 
 func waitForNotice(ch chan string) tea.Cmd {
 	return func() tea.Msg { return noticeMsg(<-ch) }
+}
+
+func waitForTodos(ch chan []todo.Item) tea.Cmd {
+	return func() tea.Msg { return todosMsg(<-ch) }
 }
 
 func waitForGoal(ch chan goalStepMsg) tea.Cmd {

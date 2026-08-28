@@ -47,6 +47,7 @@ import (
 	"github.com/MauricioJC3/arnes_ng/internal/rules"
 	"github.com/MauricioJC3/arnes_ng/internal/session"
 	"github.com/MauricioJC3/arnes_ng/internal/subagent"
+	"github.com/MauricioJC3/arnes_ng/internal/todo"
 	"github.com/MauricioJC3/arnes_ng/internal/tool"
 	"github.com/MauricioJC3/arnes_ng/internal/tui"
 	"github.com/MauricioJC3/arnes_ng/internal/update"
@@ -76,6 +77,10 @@ Trabajás sobre el código del proyecto en el directorio actual.
   edit_file.
 - bash: ejecutar cosas (tests, build, git, binarios). Un exit code distinto de cero no es un
   error de la herramienta: se reporta en la salida y vos decidís cómo seguir.
+- todo_write: la lista de tareas del trabajo actual, visible para el usuario. Para tareas de
+  varios pasos, armá la lista al principio y actualizala (pasando SIEMPRE la lista completa) a
+  medida que avanzás: un solo ítem in_progress por vez, marcá completed apenas terminás cada uno.
+  Para tareas triviales de un paso no la uses.
 - remember / recall: memoria persistente entre sesiones. Guardá decisiones, convenciones y
   datos del proyecto que no sean obvios del código. Consultala cuando el usuario haga
   referencia a algo previo.
@@ -176,6 +181,26 @@ func run() error {
 	} else {
 		approver = approval.Prompt{In: stdin, Out: os.Stdout}
 	}
+	// todo_write only mutates the in-memory checklist, so it never needs a prompt.
+	approver = approval.NewSafe(approver, "todo_write")
+
+	// The task checklist: the model keeps it via todo_write, the TUI renders it
+	// live. A buffered, latest-wins channel decouples the two goroutines.
+	todoStore := todo.NewStore()
+	todos := make(chan []todo.Item, 1)
+	todoStore.OnChange(func(items []todo.Item) {
+		for {
+			select {
+			case todos <- items:
+				return
+			default:
+				select {
+				case <-todos:
+				default:
+				}
+			}
+		}
+	})
 
 	a := &app{
 		providerName:  providerName,
@@ -217,6 +242,7 @@ func run() error {
 		tool.ReadFile{},
 		tool.WriteFile{},
 		tool.EditFile{},
+		tool.TodoWrite{Store: todoStore},
 		tool.Remember{Store: mem},
 		tool.Recall{Store: mem},
 	)
@@ -270,6 +296,7 @@ func run() error {
 			Approvals: approvals,
 			Deltas:    deltas,
 			Notices:   notices,
+			Todos:     todos,
 			Theme:     theme,
 			Greeting:  summary,
 			ListModels: func(ctx context.Context, providerName, apiKey string) ([]string, error) {
