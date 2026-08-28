@@ -32,6 +32,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -159,13 +160,7 @@ func run() error {
 		return err
 	}
 
-	startup := cfg.Clone()
-	if v := os.Getenv("ARNES_PROVIDER"); v != "" {
-		startup.Provider = v
-	}
-	if v := os.Getenv("ARNES_MODEL"); v != "" {
-		startup.Model = v
-	}
+	startup := startupConfig(cfg)
 	prov, providerName, err := providerFromConfig(mergeEnvKeys(startup))
 	if err != nil {
 		return err
@@ -196,8 +191,7 @@ func run() error {
 		return err
 	}
 
-	uiMode := strings.ToLower(cmp.Or(os.Getenv("ARNES_UI"), "tui"))
-	streaming := uiMode == "tui" && !isFalsey(os.Getenv("ARNES_STREAM"))
+	uiMode, streaming := resolveUI()
 
 	// Permission mode: ARNES_MODE wins over the config file; default normal.
 	startMode, err := parseMode(cmp.Or(os.Getenv("ARNES_MODE"), cfg.Mode, modeNormal))
@@ -210,41 +204,11 @@ func run() error {
 	notices := make(chan string, 1)
 	go checkForUpdate(cfg.AutoUpdate || isTruthy(os.Getenv("ARNES_AUTO_UPDATE")), notices)
 
-	var approver approval.Approver
-	var approvals chan approval.Request
-	var deltas chan string
-	if uiMode == "tui" {
-		ch := approval.NewChannel()
-		approver, approvals = ch, ch.Requests
-		if streaming {
-			deltas = make(chan string, 256)
-		}
-	} else {
-		approver = approval.Prompt{In: stdin, Out: os.Stdout}
-	}
-	// Read-only tools (and the in-memory checklist) never need a prompt in normal
-	// mode -- confirming every read_file is pure friction. Writes, bash and
-	// remember still go through approval.
-	approver = approval.NewSafe(approver,
-		"todo_write", "read_file", "grep", "glob", "recall", "lsp", "skill")
+	approver, approvals, deltas := buildApprover(uiMode, streaming, stdin, os.Stdout)
 
 	// The task checklist: the model keeps it via todo_write, the TUI renders it
 	// live. A buffered, latest-wins channel decouples the two goroutines.
-	todoStore := todo.NewStore()
-	todos := make(chan []todo.Item, 1)
-	todoStore.OnChange(func(items []todo.Item) {
-		for {
-			select {
-			case todos <- items:
-				return
-			default:
-				select {
-				case <-todos:
-				default:
-				}
-			}
-		}
-	})
+	todoStore, todos := newTodoBridge()
 
 	a := &app{
 		providerName:  providerName,
@@ -303,21 +267,12 @@ func run() error {
 
 	// The base pool has every tool except delegate; the agent's registry is the
 	// base plus delegate. Subagents draw from the base only (no recursion).
-	base := tool.NewRegistry(
-		tool.Bash{Timeout: 30 * time.Second},
-		tool.Grep{},
-		tool.Glob{},
-		tool.ReadFile{},
-		tool.WriteFile{},
-		tool.EditFile{},
-		tool.TodoWrite{Store: todoStore},
-		tool.LSP{Client: func(ctx context.Context, path string) (tool.LSPClient, error) {
-			return lspMgr.For(ctx, path)
-		}},
-		tool.Skill{Skills: skillReg},
-		tool.Remember{Store: mem},
-		tool.Recall{Store: mem},
-	)
+	base := buildBaseTools(baseToolDeps{
+		todos:  todoStore,
+		lspMgr: lspMgr,
+		skills: skillReg,
+		mem:    mem,
+	})
 
 	mcpTools := 0
 	if mcpCfg, err := loadMCP(); err != nil {
@@ -349,16 +304,14 @@ func run() error {
 		return err
 	}
 
-	memCount := 0
-	if notes, merrr := mem.All(); merrr == nil {
-		memCount = len(notes)
-	}
-	projLabel := projID
-	if filepath.IsAbs(projLabel) { // no git remote: show just the folder name
-		projLabel = filepath.Base(projLabel)
-	}
-	summary := fmt.Sprintf("proveedor %s · modelo %s · modo %s · %s · sesión %s · compactación %s · subagentes %d · skills %d · mcp %d tools · hooks %d · lsp %d · memoria %d [%s]",
-		a.providerName, prov.Model(), a.mode, rulesLabel, a.sess.ID, a.ag.CompactorName(), a.subagents.Len(), skillReg.Len(), mcpTools, hookCount, lspMgr.Configured(), memCount, projLabel)
+	summary := startupSummary(a, startupInfo{
+		rulesLabel: rulesLabel,
+		skills:     skillReg.Len(),
+		mcpTools:   mcpTools,
+		hooks:      hookCount,
+		lspServers: lspMgr.Configured(),
+		projID:     projID,
+	})
 
 	if uiMode == "tui" {
 		theme, err := loadTheme()
@@ -476,6 +429,131 @@ func loadSubagents() ([]subagent.Definition, error) {
 		path = p
 	}
 	return subagent.LoadFile(path)
+}
+
+// startupConfig layers the ARNES_PROVIDER / ARNES_MODEL env overrides onto a
+// copy of the loaded config. API keys are merged separately (mergeEnvKeys).
+func startupConfig(cfg config.Config) config.Config {
+	startup := cfg.Clone()
+	if v := os.Getenv("ARNES_PROVIDER"); v != "" {
+		startup.Provider = v
+	}
+	if v := os.Getenv("ARNES_MODEL"); v != "" {
+		startup.Model = v
+	}
+	return startup
+}
+
+// resolveUI reads ARNES_UI (tui by default) and ARNES_STREAM. Streaming applies
+// only to the TUI and is on unless ARNES_STREAM is an explicit off value.
+func resolveUI() (uiMode string, streaming bool) {
+	uiMode = strings.ToLower(cmp.Or(os.Getenv("ARNES_UI"), "tui"))
+	streaming = uiMode == "tui" && !isFalsey(os.Getenv("ARNES_STREAM"))
+	return uiMode, streaming
+}
+
+// buildApprover builds the approval gateway. In TUI mode requests flow through a
+// channel (and, when streaming, a 256-slot delta channel is created too); in
+// plain mode they prompt on stdin/stdout. Read-only tools and the in-memory
+// checklist are always waved through so normal mode doesn't ask on every
+// read_file -- writes, bash and remember still go through approval. The returned
+// channels are nil outside TUI mode (and deltas is nil when streaming is off).
+func buildApprover(uiMode string, streaming bool, stdin *bufio.Reader, stdout io.Writer) (approval.Approver, chan approval.Request, chan string) {
+	var approver approval.Approver
+	var approvals chan approval.Request
+	var deltas chan string
+
+	if uiMode == "tui" {
+		ch := approval.NewChannel()
+		approver, approvals = ch, ch.Requests
+		if streaming {
+			deltas = make(chan string, 256)
+		}
+	} else {
+		approver = approval.Prompt{In: stdin, Out: stdout}
+	}
+
+	approver = approval.NewSafe(approver,
+		"todo_write", "read_file", "grep", "glob", "recall", "lsp", "skill")
+	return approver, approvals, deltas
+}
+
+// newTodoBridge wires a todo store to a buffered, latest-wins channel: the model
+// mutates the store via todo_write, the TUI reads the channel. The drain loop
+// keeps only the newest snapshot so a slow reader never blocks a fast writer.
+func newTodoBridge() (*todo.Store, chan []todo.Item) {
+	store := todo.NewStore()
+	ch := make(chan []todo.Item, 1)
+	store.OnChange(func(items []todo.Item) {
+		for {
+			select {
+			case ch <- items:
+				return
+			default:
+				select {
+				case <-ch:
+				default:
+				}
+			}
+		}
+	})
+	return store, ch
+}
+
+// baseToolDeps is what buildBaseTools needs from the rest of the wiring.
+type baseToolDeps struct {
+	todos  *todo.Store
+	lspMgr *lsp.Manager
+	skills *skill.Registry
+	mem    memory.Store
+}
+
+// buildBaseTools assembles the tool pool shared by the agent and its subagents
+// (everything except delegate, which would let subagents recurse).
+func buildBaseTools(d baseToolDeps) *tool.Registry {
+	return tool.NewRegistry(
+		tool.Bash{Timeout: 30 * time.Second},
+		tool.Grep{},
+		tool.Glob{},
+		tool.ReadFile{},
+		tool.WriteFile{},
+		tool.EditFile{},
+		tool.TodoWrite{Store: d.todos},
+		tool.LSP{Client: func(ctx context.Context, path string) (tool.LSPClient, error) {
+			return d.lspMgr.For(ctx, path)
+		}},
+		tool.Skill{Skills: d.skills},
+		tool.Remember{Store: d.mem},
+		tool.Recall{Store: d.mem},
+	)
+}
+
+// startupInfo carries the counts startupSummary can't read off the app itself.
+type startupInfo struct {
+	rulesLabel string
+	skills     int
+	mcpTools   int
+	hooks      int
+	lspServers int
+	projID     string
+}
+
+// startupSummary is the one-line banner printed (plain UI) or shown as the TUI
+// greeting: provider, model, mode and the size of every configured subsystem.
+func startupSummary(a *app, info startupInfo) string {
+	memCount := 0
+	if a.mem != nil {
+		if notes, err := a.mem.All(); err == nil {
+			memCount = len(notes)
+		}
+	}
+	projLabel := info.projID
+	if filepath.IsAbs(projLabel) { // no git remote: show just the folder name
+		projLabel = filepath.Base(projLabel)
+	}
+	return fmt.Sprintf("proveedor %s · modelo %s · modo %s · %s · sesión %s · compactación %s · subagentes %d · skills %d · mcp %d tools · hooks %d · lsp %d · memoria %d [%s]",
+		a.providerName, a.prov.Model(), a.mode, info.rulesLabel, a.sess.ID, a.ag.CompactorName(),
+		a.subagents.Len(), info.skills, info.mcpTools, info.hooks, info.lspServers, memCount, projLabel)
 }
 
 // app holds the machinery to (re)build a conversation and owns the live one. It
