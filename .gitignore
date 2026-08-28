@@ -22,3 +22,6 @@ Thumbs.db
 *~
 .idea/
 .vscode/
+
+# Agent tooling (no es parte del proyecto)
+.atl/
