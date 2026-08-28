@@ -108,12 +108,12 @@ type Model struct {
 
 	transcript  // scrollback: entries, in-flight text, viewport, markdown renderer
 	promptInput // the text prompt, its "/…" command menu, and the ↑/↓ recall history
+	turn        // in-flight agent work: busy flag, cancel, result/delta channels
 
 	sp spinner.Model
 
 	width, height int
 
-	busy       bool
 	pending    *approval.Request
 	connect    *connectForm
 	model      *modelForm
@@ -122,16 +122,10 @@ type Model struct {
 	quitHint   bool // first Esc arms the "Esc again to quit" prompt
 	mouseOn    bool // mouse capture state; Ctrl+O toggles it (off = terminal text selection)
 
-	goalCh            chan goalStepMsg
-	goalIter, goalMax int // >0 while a /goal loop is running
-
 	approvals chan approval.Request
-	deltas    chan string
 	notices   chan string
 	todos     chan []todo.Item
 	todoItems []todo.Item // current checklist; rendered as a panel above the input
-	results   chan runResult
-	cancel    context.CancelFunc // cancels the in-flight agent turn
 }
 
 // New builds the model. It does not start the program (see Run).
@@ -156,15 +150,13 @@ func New(cfg Config) Model {
 		styles:      styles,
 		transcript:  transcript{styles: styles, mdStyle: cfg.MarkdownStyle},
 		promptInput: newPromptInput(styles),
+		turn:        newTurn(cfg.Deltas),
 		sp:          sp,
 		approvals:   cfg.Approvals,
-		deltas:      cfg.Deltas,
 		notices:     cfg.Notices,
 		todos:       cfg.Todos,
 		mouseOn:     cfg.MouseOn,
 		listModels:  cfg.ListModels,
-		results:     make(chan runResult, 1),
-		goalCh:      make(chan goalStepMsg, 4),
 	}
 	if cfg.Greeting != "" {
 		m.entries = append(m.entries, entry{kind: kindInfo, text: cfg.Greeting})
@@ -350,7 +342,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.busy {
 			m.transcript.appendDelta(string(msg))
 		}
-		return m, waitForDelta(m.deltas)
+		return m, m.turn.awaitDelta()
 
 	case noticeMsg:
 		m.add(kindInfo, string(msg))
@@ -376,9 +368,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case goalStepMsg:
 		// A new goal iteration is about to run: commit the previous one's text.
 		m.commitLive()
-		m.goalIter, m.goalMax = msg[0], msg[1]
 		m.setContent(true)
-		return m, waitForGoal(m.goalCh)
+		return m, m.turn.stepGoal(msg)
 
 	case approvalMsg:
 		// Commit the pre-tool text the model streamed so far as its own entry.
@@ -388,9 +379,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForApproval(m.approvals) // re-arm for the next request
 
 	case runResult:
-		m.busy = false
-		m.cancel = nil
-		m.goalIter, m.goalMax = 0, 0
+		m.turn.end()
 		switch {
 		case msg.goal != nil:
 			m.commitLive() // the last iteration's text
@@ -541,46 +530,17 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	}
 
 	m.add(kindUser, text)
-	m.busy = true
-	m.live = ""
+	m.transcript.dropLive()
 	m.ta.Blur()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	m.cancel = cancel
-	go func() {
-		out, err := m.conv.Run(ctx, text)
-		m.results <- runResult{text: out, err: err}
-	}()
-	return m, tea.Batch(m.sp.Tick, waitForResult(m.results))
+	return m, tea.Batch(m.sp.Tick, m.turn.startAgent(m.conv, text))
 }
 
 // startGoal kicks off a Ralph-style goal loop as a cancellable background turn.
 func (m Model) startGoal(req *command.GoalRequest) (tea.Model, tea.Cmd) {
 	m.add(kindInfo, "objetivo: "+req.Text+"  ·  Ctrl+C para cortar")
-	m.busy = true
-	m.live = ""
+	m.transcript.dropLive()
 	m.ta.Blur()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	m.cancel = cancel
-	conv := m.conv
-	ch := m.goalCh
-
-	cfg := goalpkg.Config{
-		MaxIterations: req.MaxIter,
-		Progress:      func(n, max int) { ch <- goalStepMsg{n, max} },
-	}
-	if req.Fresh {
-		if ff, ok := m.conv.(command.FreshFactory); ok {
-			cfg.NewConversation = func() goalpkg.Conversation { return ff.FreshConversation() }
-		}
-	}
-
-	go func() {
-		rep, err := goalpkg.Run(ctx, conv, req.Text, cfg)
-		m.results <- runResult{goal: &rep, err: err}
-	}()
-	return m, tea.Batch(m.sp.Tick, waitForResult(m.results), waitForGoal(ch))
+	return m, tea.Batch(m.sp.Tick, m.turn.startGoal(m.conv, req))
 }
 
 // cancelWithCtrlC handles Ctrl+C: cancel the in-flight work, or clear a
@@ -598,9 +558,7 @@ func (m Model) cancelWithCtrlC() (tea.Model, tea.Cmd) {
 	case m.menu.open:
 		m.menu = commandMenu{}
 	case m.busy:
-		if m.cancel != nil {
-			m.cancel()
-		}
+		m.turn.interrupt()
 	case m.ta.Value() != "":
 		m.ta.SetValue("")
 		m.menu.update("")
@@ -642,18 +600,11 @@ func (m Model) cycleMode() Model {
 	return m
 }
 
-// waitFor* are tea.Cmds that block on a channel.
+// waitFor* are tea.Cmds that block on a channel. The turn-owned ones
+// (waitForResult, waitForDelta, waitForGoal) live in turn.go.
 
 func waitForApproval(ch chan approval.Request) tea.Cmd {
 	return func() tea.Msg { return approvalMsg(<-ch) }
-}
-
-func waitForResult(ch chan runResult) tea.Cmd {
-	return func() tea.Msg { return <-ch }
-}
-
-func waitForDelta(ch chan string) tea.Cmd {
-	return func() tea.Msg { return deltaMsg(<-ch) }
 }
 
 func waitForNotice(ch chan string) tea.Cmd {
@@ -662,10 +613,6 @@ func waitForNotice(ch chan string) tea.Cmd {
 
 func waitForTodos(ch chan []todo.Item) tea.Cmd {
 	return func() tea.Msg { return todosMsg(<-ch) }
-}
-
-func waitForGoal(ch chan goalStepMsg) tea.Cmd {
-	return func() tea.Msg { return <-ch }
 }
 
 // redactConnect masks the api-key argument of /connect so it never lands in the
