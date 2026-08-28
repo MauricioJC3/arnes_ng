@@ -12,7 +12,7 @@ import (
 
 func newMemStore(t *testing.T) memory.Store {
 	t.Helper()
-	s, err := memory.NewFileStore(filepath.Join(t.TempDir(), "notes.json"))
+	s, err := memory.NewFileStore(filepath.Join(t.TempDir(), "notes.json"), "")
 	if err != nil {
 		t.Fatal(err)
 	}

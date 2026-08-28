@@ -24,18 +24,28 @@ func DefaultPath() (string, error) {
 }
 
 // FileStore keeps every note in one JSON array file. A mutex serializes tool
-// calls so concurrent remember/recall don't race on the file.
+// calls so concurrent remember/recall don't race on the file. project scopes
+// what Add stamps and what Search/All return; an empty project disables scoping
+// (every note matches).
 type FileStore struct {
-	path string
-	mu   sync.Mutex
+	path    string
+	project string
+	mu      sync.Mutex
 }
 
-// NewFileStore ensures the parent directory exists and returns a store at path.
-func NewFileStore(path string) (*FileStore, error) {
+// NewFileStore ensures the parent directory exists and returns a store at path,
+// scoped to project (use DetectID; "" disables scoping).
+func NewFileStore(path, project string) (*FileStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("no se pudo crear %s: %w", filepath.Dir(path), err)
 	}
-	return &FileStore{path: path}, nil
+	return &FileStore{path: path, project: project}, nil
+}
+
+// inScope reports whether a note belongs to this store's project. A note with no
+// project (pre-scoping / global) is visible everywhere.
+func (fs *FileStore) inScope(n Note) bool {
+	return fs.project == "" || n.Project == "" || n.Project == fs.project
 }
 
 func (fs *FileStore) Add(text string, tags []string) (Note, error) {
@@ -54,6 +64,7 @@ func (fs *FileStore) Add(text string, tags []string) (Note, error) {
 		ID:        noteID(),
 		Text:      text,
 		Tags:      normalizeTags(tags),
+		Project:   fs.project,
 		CreatedAt: time.Now(),
 	}
 	if err := fs.write(append(notes, n)); err != nil {
@@ -70,8 +81,14 @@ func (fs *FileStore) All() ([]Note, error) {
 	if err != nil {
 		return nil, err
 	}
-	sortNewestFirst(notes)
-	return notes, nil
+	out := notes[:0:0]
+	for _, n := range notes {
+		if fs.inScope(n) {
+			out = append(out, n)
+		}
+	}
+	sortNewestFirst(out)
+	return out, nil
 }
 
 func (fs *FileStore) Search(query string, tags []string, limit int) ([]Note, error) {
@@ -90,6 +107,9 @@ func (fs *FileStore) Search(query string, tags []string, limit int) ([]Note, err
 
 	var out []Note
 	for _, n := range notes {
+		if !fs.inScope(n) {
+			continue
+		}
 		if !matchesTerms(n.Text, terms) {
 			continue
 		}

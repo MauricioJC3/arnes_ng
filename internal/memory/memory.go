@@ -5,11 +5,13 @@ package memory
 
 import "time"
 
-// Note is one remembered fact.
+// Note is one remembered fact. Project scopes it to a codebase (see DetectID);
+// empty means a pre-scoping / global note, which every project still sees.
 type Note struct {
 	ID        string    `json:"id"`
 	Text      string    `json:"text"`
 	Tags      []string  `json:"tags,omitempty"`
+	Project   string    `json:"project,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

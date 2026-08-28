@@ -15,7 +15,7 @@ que lo envuelve.
   (Moonshot) y OpenAI. Se cambia en caliente con `/connect` y queda guardado.
 - **Herramientas base**: `bash`, `grep` (busca texto, usa ripgrep si está),
   `glob` (busca archivos, soporta `**`), `read_file`, `write_file`, `edit_file`
-  (reemplazo quirúrgico), y memoria persistente (`remember` / `recall`).
+  (reemplazo quirúrgico), y memoria persistente por proyecto (`remember` / `recall`).
 - **Eficiencia**: prompt caching en Anthropic (`cache_control` en system + tools +
   prefijo del historial) y retry con backoff ante 429/5xx.
 - **Gateway de aprobación**: nada se ejecuta sin un sí. Denegar no rompe el bucle.
@@ -33,6 +33,13 @@ que lo envuelve.
   la sesión (`$0.0421`); `/cost` lista el gasto por sesión, con total. El uso se
   persiste, así que `/resume` continúa el conteo.
 - **Sesiones persistentes**: cada turno se guarda; se reanudan por id o prefijo.
+- **Memoria por proyecto**: `remember` / `recall` guardan notas en
+  `~/.arnes/memory/notes.json`, scopeadas al proyecto (remote de git, o la ruta si
+  no hay remote). Al arrancar una sesión —o al cambiar de modelo— las notas del
+  proyecto se inyectan al system prompt como "Memoria del proyecto", así el
+  contexto sobrevive. Si preferís Engram u otra memoria por MCP, agregá su
+  servidor a `~/.arnes/mcp.json` y sus tools (`mem_save`, `mem_search`, …) quedan
+  disponibles junto a las nativas; las dos cosas conviven.
 - **Checkpoints / rewind**: antes de cada turno se toma un punto de restauración
   (historial + contenido previo de los archivos que el turno toque con
   `write_file` / `edit_file`). `/rewind` lista los checkpoints; `/rewind n` vuelve
@@ -124,7 +131,7 @@ Las variables ganan sobre el archivo de config.
 | `ARNES_MODEL` | override del modelo |
 | `ARNES_UI` | `tui` (default) `\|` `plain` |
 | `ARNES_STREAM` | `off` para desactivar el streaming en la TUI |
-| `ARNES_MOUSE` | `off` para desactivar la captura de mouse (por defecto ON: rueda de scroll; para seleccionar texto mantené Shift) |
+| `ARNES_MOUSE` | `on` para capturar el mouse (rueda de scroll; deshabilita la selección de texto del terminal). Por defecto OFF; `Ctrl+O` lo alterna en vivo |
 | `ARNES_COMPACT` | `off` (default) `\|` `sliding` `\|` `summarize` |
 | `ARNES_COMPACT_AT` | umbral de tokens para auto-compactar (default 120000) |
 | `ARNES_RESUME` | id (o prefijo) de sesión a reanudar al arrancar |
@@ -142,9 +149,10 @@ autocompletado.
 ### Teclas (TUI)
 
 `Enter` enviar · `Ctrl+C` cancelar el turno en curso (o limpiar el input) ·
-`Esc` dos veces para salir · `shift+tab` ciclar modo ·
+`Esc` dos veces para salir · `shift+tab` ciclar modo · `Ctrl+O` alternar captura
+de mouse (rueda de scroll ⇄ selección de texto) ·
 `↑↓` recuperar mensajes previos (estando al fondo con el input vacío) o scroll
-del transcript si ya venís leyendo hacia arriba · rueda del mouse ·
+del transcript si ya venís leyendo hacia arriba ·
 `PgUp/PgDn` `Ctrl+U/Ctrl+D` `Home/End` scroll.
 
 ## Estructura
@@ -157,7 +165,7 @@ del transcript si ya venís leyendo hacia arriba · rueda del mouse ·
 | `internal/tool` | herramientas base + `Registry` |
 | `internal/approval` | gateway de aprobación (prompt, canal async, allow-all, read-only) |
 | `internal/session` | persistencia de conversaciones (`FileStore`, decorator `Persisting`) |
-| `internal/memory` | memoria persistente (`remember` / `recall`) |
+| `internal/memory` | memoria persistente por proyecto (`remember` / `recall`, digest al prompt) |
 | `internal/compact` | estrategias de compactación de contexto |
 | `internal/subagent` | definiciones de subagentes + `DelegateTool` |
 | `internal/mcp` | cliente MCP stdio (JSON-RPC 2.0) |

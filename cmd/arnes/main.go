@@ -14,7 +14,7 @@
 //	ARNES_LSP           path to an lsp.json file (default ~/.arnes/lsp.json)
 //	ARNES_UI            tui (default) | plain
 //	ARNES_STREAM        off to disable live token streaming in the TUI
-//	ARNES_MOUSE         off to disable mouse capture (on by default: wheel scroll)
+//	ARNES_MOUSE         on to capture the mouse for wheel scroll (off by default; Ctrl+O toggles)
 //	ARNES_THEME         path to a theme JSON file (default ~/.arnes/theme.json)
 //	ARNES_CONFIG        path to the settings file (default ~/.arnes/config.json)
 //	ARNES_AUTO_UPDATE  on to let the daily check install a newer release itself
@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -104,9 +105,10 @@ Trabajás sobre el código del proyecto en el directorio actual.
   definición o hover (tipo/doc) de un símbolo. Después de editar, lsp con action "diagnostics"
   sobre el archivo es un chequeo rápido antes de correr toda la suite. Puede no estar
   configurado para el lenguaje del archivo.
-- remember / recall: memoria persistente entre sesiones. Guardá decisiones, convenciones y
-  datos del proyecto que no sean obvios del código. Consultala cuando el usuario haga
-  referencia a algo previo.
+- remember / recall: memoria persistente entre sesiones, POR PROYECTO. Guardá decisiones,
+  convenciones y datos del proyecto que no sean obvios del código, apenas los descubrís o el
+  usuario los define — no esperes a que te lo pidan. Consultá con recall cuando el usuario haga
+  referencia a algo previo. Si arriba hay una sección "Memoria del proyecto", es lo ya guardado.
 
 ## Permisos
 
@@ -176,7 +178,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	mem, err := memory.NewFileStore(memPath)
+	memCWD, _ := os.Getwd()
+	projID := memory.DetectID(memCWD)
+	mem, err := memory.NewFileStore(memPath, projID)
 	if err != nil {
 		return err
 	}
@@ -240,6 +244,7 @@ func run() error {
 		streaming:     streaming,
 		deltas:        deltas,
 		checkpoints:   checkpoint.NewStore(),
+		mem:           mem,
 	}
 
 	subDefs, err := loadSubagents()
@@ -322,8 +327,16 @@ func run() error {
 		return err
 	}
 
-	summary := fmt.Sprintf("proveedor %s · modelo %s · modo %s · %s · sesión %s · compactación %s · subagentes %d · mcp %d tools · hooks %d · lsp %d",
-		a.providerName, prov.Model(), a.mode, rulesLabel, a.sess.ID, a.ag.CompactorName(), a.subagents.Len(), mcpTools, hookCount, lspMgr.Configured())
+	memCount := 0
+	if notes, merrr := mem.All(); merrr == nil {
+		memCount = len(notes)
+	}
+	projLabel := projID
+	if filepath.IsAbs(projLabel) { // no git remote: show just the folder name
+		projLabel = filepath.Base(projLabel)
+	}
+	summary := fmt.Sprintf("proveedor %s · modelo %s · modo %s · %s · sesión %s · compactación %s · subagentes %d · mcp %d tools · hooks %d · lsp %d · memoria %d [%s]",
+		a.providerName, prov.Model(), a.mode, rulesLabel, a.sess.ID, a.ag.CompactorName(), a.subagents.Len(), mcpTools, hookCount, lspMgr.Configured(), memCount, projLabel)
 
 	if uiMode == "tui" {
 		theme, err := loadTheme()
@@ -448,6 +461,7 @@ type app struct {
 	deltas        chan string
 	hooks         agent.Hooks       // pre/post tool-call hooks; nil when none configured
 	checkpoints   *checkpoint.Store // per-turn restore points for /rewind
+	mem           memory.Store      // project-scoped persistent memory (for the prompt digest)
 	rules         string            // project rules, already wrapped for the system prompt
 
 	sess            *session.Session
@@ -560,6 +574,19 @@ func (a *app) effectiveApprover() approval.Approver {
 	}
 }
 
+// buildSystem assembles the full system prompt: the base, the project rules,
+// the project-memory digest (so a fresh session or a model switch keeps the
+// accumulated context), and the mode addendum.
+func (a *app) buildSystem() string {
+	s := systemPrompt + a.rules
+	if a.mem != nil {
+		if d := memory.Digest(a.mem, 15); d != "" {
+			s += "\n\n" + d
+		}
+	}
+	return s + modeAddendum(a.mode)
+}
+
 func modeAddendum(mode string) string {
 	switch mode {
 	case modePlan:
@@ -592,7 +619,7 @@ func (a *app) SetMode(name string) (string, error) {
 // rebuild swaps in a fresh agent + persister for the given session/history.
 func (a *app) rebuild(sess *session.Session, history []provider.Message) {
 	opts := []agent.Option{
-		agent.WithSystem(systemPrompt + a.rules + modeAddendum(a.mode)),
+		agent.WithSystem(a.buildSystem()),
 		agent.WithHistory(history),
 		agent.WithWarnFn(func(err error) { fmt.Fprintln(os.Stderr, "arnés:", err) }),
 	}
@@ -625,7 +652,7 @@ func (a *app) rebuild(sess *session.Session, history []provider.Message) {
 // persisted -- state for the fresh Ralph loop lives in files and git.
 func (a *app) FreshConversation() command.Conversation {
 	opts := []agent.Option{
-		agent.WithSystem(systemPrompt + a.rules + modeAddendum(a.mode)),
+		agent.WithSystem(a.buildSystem()),
 		agent.WithWarnFn(func(err error) { fmt.Fprintln(os.Stderr, "arnés:", err) }),
 	}
 	if a.hooks != nil {

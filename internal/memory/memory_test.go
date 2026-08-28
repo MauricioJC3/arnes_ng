@@ -2,12 +2,22 @@ package memory
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func newStore(t *testing.T) *FileStore {
 	t.Helper()
-	s, err := NewFileStore(filepath.Join(t.TempDir(), "mem", "notes.json"))
+	s, err := NewFileStore(filepath.Join(t.TempDir(), "mem", "notes.json"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func newScopedStore(t *testing.T, path, project string) *FileStore {
+	t.Helper()
+	s, err := NewFileStore(path, project)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,4 +96,66 @@ func TestSearch(t *testing.T) {
 			t.Fatalf("quiero 0, tengo %d", len(got))
 		}
 	})
+}
+
+func TestProjectScoping(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "notes.json")
+
+	// Nota vieja sin proyecto (pre-scoping): la ve todo el mundo.
+	legacy := newScopedStore(t, path, "")
+	if _, err := legacy.Add("nota global vieja", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	a := newScopedStore(t, path, "owner/proj-a")
+	b := newScopedStore(t, path, "owner/proj-b")
+	if _, err := a.Add("solo de A", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Add("solo de B", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := a.All()
+	if len(got) != 2 {
+		t.Fatalf("A debería ver su nota + la global, tiene %d: %+v", len(got), got)
+	}
+	for _, n := range got {
+		if n.Text == "solo de B" {
+			t.Fatal("A no debería ver notas de B")
+		}
+	}
+	if s, _ := a.Search("solo", nil, 0); len(s) != 1 || s[0].Text != "solo de A" {
+		t.Fatalf("Search de A cruzó proyectos: %+v", s)
+	}
+
+	// Un store sin scoping ve todo.
+	if all, _ := newScopedStore(t, path, "").All(); len(all) != 3 {
+		t.Fatalf("sin scoping quiero 3, tengo %d", len(all))
+	}
+}
+
+func TestDigest(t *testing.T) {
+	s := newStore(t)
+	if Digest(s, 15) != "" {
+		t.Fatal("digest de un store vacío debería ser \"\"")
+	}
+	_, _ = s.Add("la config vive en ~/.foo", []string{"config"})
+	_, _ = s.Add("se usa postgres 16", nil)
+
+	d := Digest(s, 15)
+	if !strings.Contains(d, "## Memoria del proyecto") ||
+		!strings.Contains(d, "se usa postgres 16") ||
+		!strings.Contains(d, "la config vive en ~/.foo") ||
+		!strings.Contains(d, "(tags: config)") {
+		t.Fatalf("digest incompleto:\n%s", d)
+	}
+
+	// respeta el tope
+	for i := 0; i < 30; i++ {
+		_, _ = s.Add("relleno", nil)
+	}
+	if n := strings.Count(Digest(s, 5), "\n- "); n != 5 {
+		t.Fatalf("con maxNotes 5 quiero 5 ítems, tengo %d", n)
+	}
 }
