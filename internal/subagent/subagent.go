@@ -59,9 +59,10 @@ func Defaults() []Definition {
 		{
 			Name:        "research",
 			Description: "Explora el código y responde preguntas amplias de 'cómo funciona X' o 'dónde está Y'. No modifica nada; devuelve un resumen con archivos y hallazgos.",
-			System: "Sos un agente de investigación de código. Explorás con read_file y bash (grep, find, ls). " +
+			System: "Sos un agente de investigación de código. Explorás con grep (buscar texto/patrones), " +
+				"glob (encontrar archivos por patrón) y read_file. Usá bash solo para cosas que esas tres no cubren. " +
 				"No modificás nada. Devolvés un resumen conciso: qué encontraste, en qué archivos y las líneas relevantes.",
-			Tools: []string{"read_file", "bash"},
+			Tools: []string{"grep", "glob", "read_file", "bash"},
 		},
 		{
 			Name:        "test-writer",

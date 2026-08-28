@@ -103,4 +103,78 @@ func TestEditFile(t *testing.T) {
 			t.Fatalf("permisos = %o, quiero 600", info.Mode().Perm())
 		}
 	})
+
+	t.Run("edits múltiples en orden", func(t *testing.T) {
+		p := writeTemp(t, "uno\ndos\ntres\n")
+		out, err := EditFile{}.Execute(ctx, mustJSON(t, map[string]any{
+			"path": p,
+			"edits": []any{
+				map[string]any{"old": "uno", "new": "1"},
+				map[string]any{"old": "dos", "new": "2"},
+				map[string]any{"old": "tres", "new": "3"},
+			},
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, _ := os.ReadFile(p)
+		if string(got) != "1\n2\n3\n" {
+			t.Fatalf("archivo = %q", got)
+		}
+		if !strings.Contains(out, "3 edición(es)") || !strings.Contains(out, "3 reemplazos") {
+			t.Errorf("resumen = %q", out)
+		}
+	})
+
+	t.Run("edits encadenados: uno depende del anterior", func(t *testing.T) {
+		p := writeTemp(t, "valor = 1\n")
+		if _, err := (EditFile{}).Execute(ctx, mustJSON(t, map[string]any{
+			"path": p,
+			"edits": []any{
+				map[string]any{"old": "valor = 1", "new": "valor = 2"},
+				map[string]any{"old": "valor = 2", "new": "valor = 3"},
+			},
+		})); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := os.ReadFile(p)
+		if string(got) != "valor = 3\n" {
+			t.Fatalf("archivo = %q", got)
+		}
+	})
+
+	t.Run("edits es all-or-nothing: el segundo falla, no se escribe nada", func(t *testing.T) {
+		p := writeTemp(t, "alfa\nbeta\n")
+		_, err := EditFile{}.Execute(ctx, mustJSON(t, map[string]any{
+			"path": p,
+			"edits": []any{
+				map[string]any{"old": "alfa", "new": "ALFA"},
+				map[string]any{"old": "no-existe", "new": "x"},
+			},
+		}))
+		if err == nil || !strings.Contains(err.Error(), "edición 2/2") {
+			t.Fatalf("esperaba error de la edición 2, tengo: %v", err)
+		}
+		got, _ := os.ReadFile(p)
+		if string(got) != "alfa\nbeta\n" {
+			t.Fatalf("el archivo se modificó pese al fallo: %q", got)
+		}
+	})
+
+	t.Run("edits con replace_all por entrada", func(t *testing.T) {
+		p := writeTemp(t, "a a a\nb\n")
+		if _, err := (EditFile{}).Execute(ctx, mustJSON(t, map[string]any{
+			"path": p,
+			"edits": []any{
+				map[string]any{"old": "a", "new": "x", "replace_all": true},
+				map[string]any{"old": "b", "new": "y"},
+			},
+		})); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := os.ReadFile(p)
+		if string(got) != "x x x\ny\n" {
+			t.Fatalf("archivo = %q", got)
+		}
+	})
 }
