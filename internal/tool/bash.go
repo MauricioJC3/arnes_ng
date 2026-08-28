@@ -22,9 +22,11 @@ type Bash struct {
 func (Bash) Name() string { return "bash" }
 
 func (Bash) Description() string {
-	return "Ejecuta un comando de shell (con `bash -c`) en la máquina local y devuelve " +
-		"su salida combinada (stdout + stderr). Usala para inspeccionar el sistema de " +
-		"archivos, correr binarios, git, tests, etc. La salida se trunca según el modelo."
+	return "Ejecuta un comando de shell con `bash -c` y devuelve su salida combinada " +
+		"(stdout + stderr). Usala para EJECUTAR cosas: tests, build, git, binarios, " +
+		"instaladores. Para BUSCAR texto usá grep, y para encontrar archivos usá glob " +
+		"(no `grep`/`find`/`rg` por acá). Un exit code distinto de cero no es un error de " +
+		"la herramienta: se anexa a la salida y vos decidís cómo seguir."
 }
 
 func (Bash) InputSchema() map[string]any {

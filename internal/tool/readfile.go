@@ -14,7 +14,8 @@ type ReadFile struct{}
 func (ReadFile) Name() string { return "read_file" }
 
 func (ReadFile) Description() string {
-	return "Lee y devuelve el contenido completo de un archivo de texto en la ruta indicada."
+	return "Lee y devuelve el contenido completo de un archivo de texto. Leé el código antes " +
+		"de modificarlo: nunca edites a ciegas."
 }
 
 func (ReadFile) InputSchema() map[string]any {

@@ -15,9 +15,10 @@ type EditFile struct{}
 func (EditFile) Name() string { return "edit_file" }
 
 func (EditFile) Description() string {
-	return "Reemplaza un fragmento EXACTO de texto en un archivo existente. `old` debe " +
-		"aparecer una sola vez (a menos que uses replace_all). Preferí esta herramienta " +
-		"sobre write_file para cambios puntuales: es más barata y no reescribe todo el archivo."
+	return "Editá un archivo existente reemplazando un fragmento EXACTO de texto. `old` es el " +
+		"texto tal cual está (con su indentación) y debe aparecer una sola vez — si no, hacelo " +
+		"más específico incluyendo líneas de contexto, o pasá replace_all. Esta es la " +
+		"herramienta por defecto para modificar código; write_file es solo para archivos nuevos."
 }
 
 func (EditFile) InputSchema() map[string]any {

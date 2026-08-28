@@ -15,8 +15,9 @@ type WriteFile struct{}
 func (WriteFile) Name() string { return "write_file" }
 
 func (WriteFile) Description() string {
-	return "Crea o sobrescribe un archivo de texto en la ruta indicada con el contenido dado. " +
-		"Crea los directorios padre si no existen."
+	return "Crea un archivo NUEVO o reescribe uno completo con el contenido dado (crea los " +
+		"directorios padre). Para cambios puntuales en un archivo existente usá edit_file: " +
+		"es más barato y no arriesga pisar el resto del archivo."
 }
 
 func (WriteFile) InputSchema() map[string]any {
