@@ -2,6 +2,7 @@ package provider
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -55,6 +56,15 @@ func TestAnthropicToParams(t *testing.T) {
 	}
 	if got := params.Tools[0].OfTool.InputSchema.Required; len(got) != 1 || got[0] != "command" {
 		t.Errorf("'required' del schema mal traducido: %+v", got)
+	}
+
+	// caching: cache_control en el system y en el prefijo de mensajes
+	raw, err := params.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(raw), "cache_control"); n < 2 {
+		t.Fatalf("esperaba >=2 marcas cache_control (system + prefijo), hay %d\n%s", n, raw)
 	}
 }
 

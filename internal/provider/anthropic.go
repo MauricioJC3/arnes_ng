@@ -21,10 +21,12 @@ type Anthropic struct {
 }
 
 // NewAnthropic builds the adapter. With no options the SDK reads its credentials
-// (ANTHROPIC_API_KEY and the other sources) from the environment.
+// (ANTHROPIC_API_KEY and the other sources) from the environment. The SDK
+// already retries 429/5xx/connection errors with backoff; we bump the limit.
 func NewAnthropic(opts ...option.RequestOption) *Anthropic {
+	all := append([]option.RequestOption{option.WithMaxRetries(4)}, opts...)
 	return &Anthropic{
-		client: anthropic.NewClient(opts...),
+		client: anthropic.NewClient(all...),
 		model:  DefaultAnthropicModel,
 	}
 }
@@ -101,9 +103,18 @@ func (a *Anthropic) toParams(req Request) (anthropic.MessageNewParams, error) {
 		Model:     anthropic.Model(a.model),
 		MaxTokens: int64(maxTokens),
 		Messages:  msgs,
+		// Cache the stable message prefix: on the next turn everything except the
+		// newest message is a cache read. A prefix shorter than the model's
+		// minimum simply won't cache -- no downside.
+		CacheControl: anthropic.NewCacheControlEphemeralParam(),
 	}
 	if req.System != "" {
-		params.System = []anthropic.TextBlockParam{{Text: req.System}}
+		// Caching the system block also caches the tool definitions (they render
+		// before system in the request).
+		params.System = []anthropic.TextBlockParam{{
+			Text:         req.System,
+			CacheControl: anthropic.NewCacheControlEphemeralParam(),
+		}}
 	}
 	if len(req.Tools) > 0 {
 		params.Tools = toToolUnion(req.Tools)
