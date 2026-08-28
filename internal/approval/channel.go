@@ -1,6 +1,6 @@
 package approval
 
-import "github.com/andresmjimenez/arnes/internal/provider"
+import "github.com/MauricioJC3/arnes_ng/internal/provider"
 
 // Request is one pending tool approval handed to an async front-end (the TUI).
 type Request struct {

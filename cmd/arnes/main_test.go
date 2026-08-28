@@ -5,12 +5,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andresmjimenez/arnes/internal/approval"
-	"github.com/andresmjimenez/arnes/internal/config"
-	"github.com/andresmjimenez/arnes/internal/provider"
-	"github.com/andresmjimenez/arnes/internal/session"
-	"github.com/andresmjimenez/arnes/internal/subagent"
-	"github.com/andresmjimenez/arnes/internal/tool"
+	"github.com/MauricioJC3/arnes_ng/internal/approval"
+	"github.com/MauricioJC3/arnes_ng/internal/config"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/session"
+	"github.com/MauricioJC3/arnes_ng/internal/subagent"
+	"github.com/MauricioJC3/arnes_ng/internal/tool"
 )
 
 func TestProviderFromConfig(t *testing.T) {

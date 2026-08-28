@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/andresmjimenez/arnes/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
 )
 
 func TestFileStoreRoundTrip(t *testing.T) {

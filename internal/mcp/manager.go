@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/andresmjimenez/arnes/internal/tool"
+	"github.com/MauricioJC3/arnes_ng/internal/tool"
 )
 
 // dialTimeout bounds each server's handshake so one slow server can't hang startup.

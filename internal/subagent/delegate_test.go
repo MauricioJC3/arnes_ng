@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andresmjimenez/arnes/internal/approval"
-	"github.com/andresmjimenez/arnes/internal/provider"
-	"github.com/andresmjimenez/arnes/internal/tool"
+	"github.com/MauricioJC3/arnes_ng/internal/approval"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/tool"
 )
 
 // recordingProvider captures every request and returns a fixed final answer.

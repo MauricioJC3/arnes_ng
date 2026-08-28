@@ -3,7 +3,7 @@ package compact
 import (
 	"context"
 
-	"github.com/andresmjimenez/arnes/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
 )
 
 // DefaultKeep is how many recent messages SlidingWindow keeps when Keep is unset.

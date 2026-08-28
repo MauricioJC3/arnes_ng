@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/andresmjimenez/arnes/internal/command"
+	"github.com/MauricioJC3/arnes_ng/internal/command"
 )
 
 // footerRows is the height reserved for the input / approval / status area.

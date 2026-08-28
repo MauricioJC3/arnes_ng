@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andresmjimenez/arnes/internal/memory"
+	"github.com/MauricioJC3/arnes_ng/internal/memory"
 )
 
 func newMemStore(t *testing.T) memory.Store {

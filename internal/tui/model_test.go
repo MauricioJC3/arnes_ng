@@ -9,8 +9,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/andresmjimenez/arnes/internal/approval"
-	"github.com/andresmjimenez/arnes/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/approval"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
 )
 
 type fakeConv struct {

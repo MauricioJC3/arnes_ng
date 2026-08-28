@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andresmjimenez/arnes/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
 )
 
 func TestChannelApprove(t *testing.T) {

@@ -10,9 +10,9 @@ import (
 	"io"
 	"strings"
 
-	"github.com/andresmjimenez/arnes/internal/command"
-	"github.com/andresmjimenez/arnes/internal/goal"
-	"github.com/andresmjimenez/arnes/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/command"
+	"github.com/MauricioJC3/arnes_ng/internal/goal"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
 )
 
 // REPL wires a conversation to an input stream and an output stream.

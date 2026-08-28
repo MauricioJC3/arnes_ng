@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/andresmjimenez/arnes/internal/memory"
+	"github.com/MauricioJC3/arnes_ng/internal/memory"
 )
 
 // Remember saves a fact into the harness's persistent memory.

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andresmjimenez/arnes/internal/provider"
-	"github.com/andresmjimenez/arnes/internal/session"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/session"
 )
 
 // fakeApp implements Conversation + Sessions + Compaction + Subagents.

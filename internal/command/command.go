@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/andresmjimenez/arnes/internal/provider"
-	"github.com/andresmjimenez/arnes/internal/session"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/session"
 )
 
 // Conversation is one user turn in, final text out.

@@ -1,4 +1,4 @@
-module github.com/andresmjimenez/arnes
+module github.com/MauricioJC3/arnes_ng
 
 go 1.26
 

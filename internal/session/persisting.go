@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/andresmjimenez/arnes/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
 )
 
 // Agent is the slice of the agent the persister needs.

@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/andresmjimenez/arnes/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
 )
 
 // Approver decides whether a single tool call is allowed to execute.

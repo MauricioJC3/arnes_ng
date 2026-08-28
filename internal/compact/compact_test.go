@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andresmjimenez/arnes/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
 )
 
 // history builds a simple alternating user/assistant history of n turns.

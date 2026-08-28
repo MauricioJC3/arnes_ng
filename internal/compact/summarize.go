@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/andresmjimenez/arnes/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
 )
 
 // DefaultRecent is how many trailing messages Summarize keeps verbatim.

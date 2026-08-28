@@ -3,7 +3,7 @@ package approval
 import (
 	"testing"
 
-	"github.com/andresmjimenez/arnes/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
 )
 
 func TestReadOnly(t *testing.T) {

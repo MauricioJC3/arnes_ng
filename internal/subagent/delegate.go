@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/andresmjimenez/arnes/internal/agent"
-	"github.com/andresmjimenez/arnes/internal/approval"
-	"github.com/andresmjimenez/arnes/internal/provider"
-	"github.com/andresmjimenez/arnes/internal/tool"
+	"github.com/MauricioJC3/arnes_ng/internal/agent"
+	"github.com/MauricioJC3/arnes_ng/internal/approval"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/tool"
 )
 
 // ToolName is the fixed name of the delegate tool.

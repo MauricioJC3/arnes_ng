@@ -3,7 +3,7 @@ package tui
 import (
 	"strings"
 
-	"github.com/andresmjimenez/arnes/internal/command"
+	"github.com/MauricioJC3/arnes_ng/internal/command"
 )
 
 // maxMenuRows caps how many suggestions the popup shows.

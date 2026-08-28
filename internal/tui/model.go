@@ -14,10 +14,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 
-	"github.com/andresmjimenez/arnes/internal/approval"
-	"github.com/andresmjimenez/arnes/internal/command"
-	goalpkg "github.com/andresmjimenez/arnes/internal/goal"
-	"github.com/andresmjimenez/arnes/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/approval"
+	"github.com/MauricioJC3/arnes_ng/internal/command"
+	goalpkg "github.com/MauricioJC3/arnes_ng/internal/goal"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
 )
 
 // Config is what Model needs from the rest of the harness.

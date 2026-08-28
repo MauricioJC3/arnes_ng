@@ -1,6 +1,6 @@
 package approval
 
-import "github.com/andresmjimenez/arnes/internal/provider"
+import "github.com/MauricioJC3/arnes_ng/internal/provider"
 
 // ReadOnly auto-approves a whitelist of (read-only) tools and auto-denies every
 // other tool without prompting. Plan mode uses it.

@@ -6,7 +6,7 @@ package compact
 import (
 	"context"
 
-	"github.com/andresmjimenez/arnes/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
 )
 
 // Strategy shrinks a history. Implementations MUST keep the result valid: a

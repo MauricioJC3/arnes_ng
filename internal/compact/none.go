@@ -3,7 +3,7 @@ package compact
 import (
 	"context"
 
-	"github.com/andresmjimenez/arnes/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
 )
 
 // None leaves the history untouched. It is the default strategy.

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/andresmjimenez/arnes/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
 )
 
 // Session is one persisted conversation.
