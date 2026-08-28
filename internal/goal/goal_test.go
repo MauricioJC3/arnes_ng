@@ -3,6 +3,7 @@ package goal
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -85,6 +86,56 @@ func TestRunPropagatesRealError(t *testing.T) {
 		t.Fatalf("err=%v report=%+v", err, rep)
 	}
 }
+
+// countingConv returns a distinct reply each call and reports fixed usage.
+type countingConv struct {
+	runs int
+}
+
+func (c *countingConv) Run(context.Context, string) (string, error) {
+	c.runs++
+	return fmt.Sprintf("paso %d", c.runs), nil
+}
+func (c *countingConv) Usage() (int, int) { return 10, 2 }
+
+func TestRunFreshMode(t *testing.T) {
+	made := 0
+	var prompts []string
+	c := &countingConv{}
+	rep, err := Run(context.Background(), nil, "hacé Y", Config{
+		MaxIterations: 3,
+		NewConversation: func() Conversation {
+			made++
+			return &recordingConv{inner: c, prompts: &prompts}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if made != 3 {
+		t.Fatalf("NewConversation llamado %d veces, quiero 3 (una por iteración)", made)
+	}
+	// tokens: 3 iteraciones × (10 in / 2 out) sumados
+	if rep.TokensIn != 30 || rep.TokensOut != 6 {
+		t.Fatalf("tokens = %d/%d, quiero 30/6", rep.TokensIn, rep.TokensOut)
+	}
+	// el prompt fresh incluye la instrucción de ponerse al día
+	if len(prompts) == 0 || !strings.Contains(prompts[0], "git status") {
+		t.Fatalf("el prompt fresh no tiene la instrucción de catch-up: %q", prompts)
+	}
+}
+
+// recordingConv wraps a Conversation to record the prompts and forward Usage.
+type recordingConv struct {
+	inner   *countingConv
+	prompts *[]string
+}
+
+func (r *recordingConv) Run(ctx context.Context, in string) (string, error) {
+	*r.prompts = append(*r.prompts, in)
+	return r.inner.Run(ctx, in)
+}
+func (r *recordingConv) Usage() (int, int) { return r.inner.Usage() }
 
 func TestSentinelMustBeOwnLine(t *testing.T) {
 	// mencionarlo en prosa NO cuenta

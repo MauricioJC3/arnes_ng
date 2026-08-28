@@ -81,10 +81,16 @@ func (r *REPL) handle(ctx context.Context, line string) (stop bool) {
 
 // runGoal runs a Ralph-style loop synchronously, printing the iteration count.
 func (r *REPL) runGoal(ctx context.Context, req *command.GoalRequest) {
-	rep, err := goal.Run(ctx, r.conv, req.Text, goal.Config{
+	cfg := goal.Config{
 		MaxIterations: req.MaxIter,
 		Progress:      func(n, max int) { fmt.Fprintf(r.out, "— iteración %d/%d —\n", n, max) },
-	})
+	}
+	if req.Fresh {
+		if ff, ok := r.conv.(command.FreshFactory); ok {
+			cfg.NewConversation = func() goal.Conversation { return ff.FreshConversation() }
+		}
+	}
+	rep, err := goal.Run(ctx, r.conv, req.Text, cfg)
 	if err != nil {
 		fmt.Fprintf(r.out, "error: %v\n", err)
 	}

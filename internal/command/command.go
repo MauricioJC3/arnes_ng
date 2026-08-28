@@ -66,7 +66,14 @@ type Result struct {
 // GoalRequest asks the front-end to start a Ralph-style goal loop.
 type GoalRequest struct {
 	Text    string
-	MaxIter int // 0 = the goal package's default
+	MaxIter int  // 0 = the goal package's default
+	Fresh   bool // --fresh: a new empty-context agent each iteration
+}
+
+// FreshFactory is implemented by a Conversation that can spawn a fresh,
+// empty-context conversation for /goal --fresh.
+type FreshFactory interface {
+	FreshConversation() Conversation
 }
 
 // Spec describes one slash command, for /help and for the TUI autocomplete.
@@ -82,7 +89,7 @@ func Commands() []Spec {
 		{"/help", "", "esta ayuda"},
 		{"/connect", "[prov] [modelo] [key]", "cambia de proveedor y lo deja guardado"},
 		{"/mode", "[normal|auto|plan]", "cambia el modo de permisos"},
-		{"/goal", "[maxIter] <objetivo>", "itera autónomamente hasta cumplir el objetivo"},
+		{"/goal", "[--fresh] [maxIter] <objetivo>", "itera autónomamente hasta cumplir el objetivo"},
 		{"/cost", "", "gasto de tokens: sesión actual + historial"},
 		{"/model", "[nombre]", "muestra o cambia el modelo"},
 		{"/sessions", "", "lista las sesiones guardadas"},
@@ -159,19 +166,32 @@ func Dispatch(line string, conv Conversation, prov provider.Provider) (Result, e
 
 	case "/goal":
 		if len(fields) < 2 {
-			return Result{}, errors.New("uso: /goal [maxIter] <objetivo>")
+			return Result{}, errors.New("uso: /goal [--fresh] [maxIter] <objetivo>")
 		}
 		args := fields[1:]
+		fresh := false
+		kept := args[:0]
+		for _, a := range args {
+			if a == "--fresh" {
+				fresh = true
+				continue
+			}
+			kept = append(kept, a)
+		}
+		args = kept
+
 		maxIter := 0
-		if n, convErr := strconv.Atoi(args[0]); convErr == nil && n > 0 && len(args) > 1 {
-			maxIter = n
-			args = args[1:]
+		if len(args) > 0 {
+			if n, convErr := strconv.Atoi(args[0]); convErr == nil && n > 0 && len(args) > 1 {
+				maxIter = n
+				args = args[1:]
+			}
 		}
 		text := strings.TrimSpace(strings.Join(args, " "))
 		if text == "" {
-			return Result{}, errors.New("uso: /goal [maxIter] <objetivo>")
+			return Result{}, errors.New("uso: /goal [--fresh] [maxIter] <objetivo>")
 		}
-		return Result{Goal: &GoalRequest{Text: text, MaxIter: maxIter}}, nil
+		return Result{Goal: &GoalRequest{Text: text, MaxIter: maxIter, Fresh: fresh}}, nil
 
 	case "/cost":
 		c, ok := conv.(Coster)

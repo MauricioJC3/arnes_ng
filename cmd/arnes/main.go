@@ -35,6 +35,7 @@ import (
 
 	"github.com/andresmjimenez/arnes/internal/agent"
 	"github.com/andresmjimenez/arnes/internal/approval"
+	"github.com/andresmjimenez/arnes/internal/command"
 	"github.com/andresmjimenez/arnes/internal/compact"
 	"github.com/andresmjimenez/arnes/internal/config"
 	"github.com/andresmjimenez/arnes/internal/mcp"
@@ -441,6 +442,23 @@ func (a *app) rebuild(sess *session.Session, history []provider.Message) {
 	a.ag = agent.New(a.prov, a.tools, a.effectiveApprover(), opts...)
 	a.sess = sess
 	a.conv = session.NewPersisting(a.ag, a.store, sess, session.WithModelFn(func() string { return a.prov.Model() }))
+}
+
+// FreshConversation implements command.FreshFactory: a bare agent with empty
+// history (same provider, tools, approver, mode) for /goal --fresh. Not
+// persisted -- state for the fresh Ralph loop lives in files and git.
+func (a *app) FreshConversation() command.Conversation {
+	opts := []agent.Option{
+		agent.WithSystem(systemPrompt + a.rules + modeAddendum(a.mode)),
+		agent.WithWarnFn(func(err error) { fmt.Fprintln(os.Stderr, "arnés:", err) }),
+	}
+	if a.streaming {
+		opts = append(opts, agent.WithStreaming(true))
+		if a.deltas != nil {
+			opts = append(opts, agent.WithDeltaFn(func(s string) { a.deltas <- s }))
+		}
+	}
+	return agent.New(a.prov, a.tools, a.effectiveApprover(), opts...)
 }
 
 // Run implements repl.Conversation. It delegates to the live conversation and

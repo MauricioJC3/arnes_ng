@@ -188,8 +188,17 @@ func TestDispatch(t *testing.T) {
 			t.Fatalf("goal ='/goal 5' = %+v", r.Goal)
 		}
 
+		// --fresh en cualquier posición
+		r, _ = Dispatch("/goal --fresh 8 migrá la config", app, p)
+		if r.Goal == nil || !r.Goal.Fresh || r.Goal.MaxIter != 8 || r.Goal.Text != "migrá la config" {
+			t.Fatalf("goal --fresh = %+v", r.Goal)
+		}
+
 		if _, err := Dispatch("/goal", app, p); err == nil {
 			t.Fatal("esperaba error sin objetivo")
+		}
+		if _, err := Dispatch("/goal --fresh", app, p); err == nil {
+			t.Fatal("esperaba error: --fresh sin objetivo")
 		}
 	})
 

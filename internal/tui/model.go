@@ -468,11 +468,19 @@ func (m Model) startGoal(req *command.GoalRequest) (tea.Model, tea.Cmd) {
 	m.cancel = cancel
 	conv := m.conv
 	ch := m.goalCh
+
+	cfg := goalpkg.Config{
+		MaxIterations: req.MaxIter,
+		Progress:      func(n, max int) { ch <- goalStepMsg{n, max} },
+	}
+	if req.Fresh {
+		if ff, ok := m.conv.(command.FreshFactory); ok {
+			cfg.NewConversation = func() goalpkg.Conversation { return ff.FreshConversation() }
+		}
+	}
+
 	go func() {
-		rep, err := goalpkg.Run(ctx, conv, req.Text, goalpkg.Config{
-			MaxIterations: req.MaxIter,
-			Progress:      func(n, max int) { ch <- goalStepMsg{n, max} },
-		})
+		rep, err := goalpkg.Run(ctx, conv, req.Text, cfg)
 		m.results <- runResult{goal: &rep, err: err}
 	}()
 	return m, tea.Batch(m.sp.Tick, waitForResult(m.results), waitForGoal(ch))
