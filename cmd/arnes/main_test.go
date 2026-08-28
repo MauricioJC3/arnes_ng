@@ -190,6 +190,53 @@ func TestAppSessionUsageResetsOnNew(t *testing.T) {
 	}
 }
 
+func TestAppResumeRestoresUsage(t *testing.T) {
+	a := newTestApp(t)
+	if _, err := a.NewSession(); err != nil {
+		t.Fatal(err)
+	}
+	first := a.sess.ID
+	a.sess.UsageIn, a.sess.UsageOut = 1200, 300
+	if err := a.store.Save(a.sess); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := a.NewSession(); err != nil { // otra sesión, uso a cero
+		t.Fatal(err)
+	}
+	if _, err := a.ResumeSession(first); err != nil {
+		t.Fatal(err)
+	}
+	if in, out := a.SessionUsage(); in != 1200 || out != 300 {
+		t.Fatalf("SessionUsage tras /resume = %d/%d, quiero 1200/300", in, out)
+	}
+}
+
+func TestAppCostReport(t *testing.T) {
+	a := newTestApp(t)
+	if _, err := a.NewSession(); err != nil {
+		t.Fatal(err)
+	}
+	a.sess.Model = "claude-opus-5"
+	a.sess.UsageIn, a.sess.UsageOut = 1_000_000, 0
+	if err := a.store.Save(a.sess); err != nil {
+		t.Fatal(err)
+	}
+	a.prov.SetModel("claude-opus-5")
+	a.usedIn = 1_000_000
+
+	rep, err := a.CostReport()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rep, "sesión actual") || !strings.Contains(rep, "$5.0000") {
+		t.Fatalf("reporte inesperado:\n%s", rep)
+	}
+	if !strings.Contains(rep, "← actual") {
+		t.Fatalf("no marcó la sesión actual:\n%s", rep)
+	}
+}
+
 func TestAppResumeMissing(t *testing.T) {
 	a := newTestApp(t)
 	if _, err := a.ResumeSession("20990101-000000-ffff"); err == nil {

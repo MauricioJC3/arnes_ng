@@ -34,6 +34,8 @@ func (f *fakeApp) Connect(p, model, key string) (string, error) {
 	return "conectado: " + p, nil
 }
 
+func (f *fakeApp) CostReport() (string, error) { return "sesión actual: $0.0000\nhistorial: (vacío)", nil }
+
 func (f *fakeApp) Mode() string { return cmp.Or(f.mode, "normal") }
 func (f *fakeApp) SetMode(name string) (string, error) {
 	if name != "normal" && name != "auto" && name != "plan" {
@@ -163,6 +165,16 @@ func TestDispatch(t *testing.T) {
 		r, err := Dispatch("/mode", app, p)
 		if err != nil || !strings.Contains(r.Output, "modo actual") {
 			t.Fatalf("r=%+v err=%v", r, err)
+		}
+	})
+
+	t.Run("/cost delega en el reporte", func(t *testing.T) {
+		r, err := Dispatch("/cost", app, p)
+		if err != nil || !strings.Contains(r.Output, "sesión actual") {
+			t.Fatalf("r=%+v err=%v", r, err)
+		}
+		if _, err := Dispatch("/cost", bareConv{}, p); err == nil {
+			t.Fatal("esperaba error sin soporte de costo")
 		}
 	})
 

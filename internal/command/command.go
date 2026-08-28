@@ -48,6 +48,12 @@ type Modes interface {
 	SetMode(name string) (string, error)
 }
 
+// Coster is implemented by a Conversation that can report token spend, current
+// and historical (the /cost command).
+type Coster interface {
+	CostReport() (string, error)
+}
+
 // Result is the outcome of a slash command: text to show, and whether to quit.
 type Result struct {
 	Output string
@@ -67,6 +73,7 @@ func Commands() []Spec {
 		{"/help", "", "esta ayuda"},
 		{"/connect", "[prov] [modelo] [key]", "cambia de proveedor y lo deja guardado"},
 		{"/mode", "[normal|auto|plan]", "cambia el modo de permisos"},
+		{"/cost", "", "gasto de tokens: sesión actual + historial"},
 		{"/model", "[nombre]", "muestra o cambia el modelo"},
 		{"/sessions", "", "lista las sesiones guardadas"},
 		{"/resume", "<id>", "reanuda una sesión (acepta prefijo)"},
@@ -139,6 +146,17 @@ func Dispatch(line string, conv Conversation, prov provider.Provider) (Result, e
 			return Result{}, err
 		}
 		return Result{Output: msg}, nil
+
+	case "/cost":
+		c, ok := conv.(Coster)
+		if !ok {
+			return Result{}, errors.New("este arnés no lleva registro de costo")
+		}
+		out, err := c.CostReport()
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Output: out}, nil
 
 	case "/model":
 		if len(fields) < 2 {

@@ -20,8 +20,9 @@ que lo envuelve.
   (solo lectura, el modelo propone un plan). Se ciclan con `shift+tab`.
 - **Reglas del proyecto**: si hay un `AGENTS.md` (o `agent.md` / `.arnes/agent.md`)
   en el directorio, su contenido se inyecta al system prompt.
-- **Costo en vivo**: la barra de estado muestra el gasto acumulado de la sesión
-  (`$0.0421`) según la tarifa del modelo.
+- **Costo en vivo e historial**: la barra de estado muestra el gasto acumulado de
+  la sesión (`$0.0421`); `/cost` lista el gasto por sesión, con total. El uso se
+  persiste, así que `/resume` continúa el conteo.
 - **Sesiones persistentes**: cada turno se guarda; se reanudan por id o prefijo.
 - **Compactación de contexto**: `none`, `sliding`, `summarize`, con umbral de tokens.
 - **Subagentes**: delegación a agentes especializados (`research`, `test-writer`),
@@ -65,8 +66,8 @@ Las variables ganan sobre el archivo de config.
 
 ### Comandos (slash)
 
-`/help` `/connect` `/mode` `/model` `/sessions` `/resume` `/new` `/compact`
-`/subagents` `/exit`. Escribí `/` en la TUI para el autocompletado.
+`/help` `/connect` `/mode` `/cost` `/model` `/sessions` `/resume` `/new`
+`/compact` `/subagents` `/exit`. Escribí `/` en la TUI para el autocompletado.
 
 ### Teclas (TUI)
 

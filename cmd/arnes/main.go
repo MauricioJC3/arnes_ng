@@ -400,24 +400,80 @@ func (a *app) rebuild(sess *session.Session, history []provider.Message) {
 			opts = append(opts, agent.WithDeltaFn(func(s string) { a.deltas <- s }))
 		}
 	}
+	// Seed the new agent with the session's running total so /mode, /compact and
+	// /model don't reset the cost.
+	opts = append(opts, agent.WithUsage(a.usedIn, a.usedOut))
+
 	a.ag = agent.New(a.prov, a.tools, a.effectiveApprover(), opts...)
 	a.sess = sess
 	a.conv = session.NewPersisting(a.ag, a.store, sess, session.WithModelFn(func() string { return a.prov.Model() }))
 }
 
 // Run implements repl.Conversation. It delegates to the live conversation and
-// folds this turn's token usage into the session total.
+// keeps the session's cumulative token usage in sync with the agent.
 func (a *app) Run(ctx context.Context, in string) (string, error) {
-	beforeIn, beforeOut := a.ag.Usage()
 	out, err := a.conv.Run(ctx, in)
-	nowIn, nowOut := a.ag.Usage()
-	a.usedIn += nowIn - beforeIn
-	a.usedOut += nowOut - beforeOut
+	a.usedIn, a.usedOut = a.ag.Usage()
 	return out, err
 }
 
 // SessionUsage returns the cumulative token usage since this session started.
 func (a *app) SessionUsage() (in, out int) { return a.usedIn, a.usedOut }
+
+// CostReport implements command.Coster: the current session's spend plus a
+// per-session history, with a total for the models that have a known price.
+func (a *app) CostReport() (string, error) {
+	metas, err := a.store.List()
+	if err != nil {
+		return "", err
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "sesión actual %s · %s · %s\n", a.sess.ID, a.prov.Model(), usageStr(a.prov.Model(), a.usedIn, a.usedOut))
+
+	if len(metas) > 0 {
+		b.WriteString("\nhistorial:\n")
+		var total float64
+		var haveTotal bool
+		for _, m := range metas {
+			mark := ""
+			if m.ID == a.sess.ID {
+				mark = "  ← actual"
+			}
+			fmt.Fprintf(&b, "  %s  %-16s  %8s tok  %s%s\n",
+				m.ID, m.Model, humanCount(m.UsageIn+m.UsageOut), usageStr(m.Model, m.UsageIn, m.UsageOut), mark)
+			if usd, ok := provider.Cost(m.Model, m.UsageIn, m.UsageOut); ok {
+				total += usd
+				haveTotal = true
+			}
+		}
+		if haveTotal {
+			fmt.Fprintf(&b, "\ntotal (modelos con tarifa conocida): $%.4f\n", total)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// usageStr renders a token pair as a dollar figure, or "sin tarifa" when the
+// model has no known price.
+func usageStr(model string, in, out int) string {
+	if usd, ok := provider.Cost(model, in, out); ok {
+		return fmt.Sprintf("$%.4f", usd)
+	}
+	return "sin tarifa"
+}
+
+// humanCount abbreviates a token count: 1234 -> "1.2k", 2_000_000 -> "2.0M".
+func humanCount(n int) string {
+	switch {
+	case n < 1000:
+		return strconv.Itoa(n)
+	case n < 1_000_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	default:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	}
+}
 
 // SetStrategy implements repl.Compaction: swap the strategy at runtime.
 func (a *app) SetStrategy(name string) (string, error) {
@@ -454,8 +510,8 @@ func (a *app) ResumeSession(id string) (string, error) {
 	if s.Model != "" {
 		a.prov.SetModel(s.Model)
 	}
+	a.usedIn, a.usedOut = s.UsageIn, s.UsageOut // continue the session's spend
 	a.rebuild(s, s.Messages)
-	a.usedIn, a.usedOut = 0, 0
 	return fmt.Sprintf("reanudada %s (%d mensajes)", s.ID, len(s.Messages)), nil
 }
 
@@ -463,8 +519,8 @@ func (a *app) ResumeSession(id string) (string, error) {
 func (a *app) NewSession() (string, error) {
 	cwd, _ := os.Getwd()
 	s := session.New(a.providerName, a.prov.Model(), cwd)
-	a.rebuild(s, nil)
 	a.usedIn, a.usedOut = 0, 0
+	a.rebuild(s, nil)
 	return "sesión nueva: " + s.ID, nil
 }
 

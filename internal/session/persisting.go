@@ -13,6 +13,7 @@ import (
 type Agent interface {
 	Run(ctx context.Context, userInput string) (string, error)
 	History() []provider.Message
+	Usage() (in, out int)
 }
 
 // Persisting decorates an Agent: it runs the turn, then snapshots the history
@@ -53,6 +54,7 @@ func (p *Persisting) Run(ctx context.Context, userInput string) (string, error) 
 
 	p.sess.Messages = p.agent.History()
 	p.sess.UpdatedAt = time.Now()
+	p.sess.UsageIn, p.sess.UsageOut = p.agent.Usage()
 	if p.sess.Title == "" {
 		p.sess.Title = title(userInput)
 	}

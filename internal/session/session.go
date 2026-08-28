@@ -18,6 +18,8 @@ type Session struct {
 	CWD       string             `json:"cwd"`
 	CreatedAt time.Time          `json:"created_at"`
 	UpdatedAt time.Time          `json:"updated_at"`
+	UsageIn   int                `json:"usage_in,omitempty"`
+	UsageOut  int                `json:"usage_out,omitempty"`
 	Messages  []provider.Message `json:"messages"`
 }
 
@@ -41,6 +43,8 @@ type Meta struct {
 	Model     string    `json:"model"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Messages  int       `json:"messages"`
+	UsageIn   int       `json:"usage_in"`
+	UsageOut  int       `json:"usage_out"`
 }
 
 // Meta projects the session into its listing view.
@@ -51,6 +55,8 @@ func (s *Session) Meta() Meta {
 		Model:     s.Model,
 		UpdatedAt: s.UpdatedAt,
 		Messages:  len(s.Messages),
+		UsageIn:   s.UsageIn,
+		UsageOut:  s.UsageOut,
 	}
 }
 

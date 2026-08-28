@@ -69,6 +69,12 @@ func WithStreaming(on bool) Option { return func(a *Agent) { a.stream = on } }
 // WithDeltaFn registers the sink for streamed text deltas.
 func WithDeltaFn(f func(string)) Option { return func(a *Agent) { a.onDelta = f } }
 
+// WithUsage seeds the cumulative token counters, so a rebuilt agent keeps the
+// session's running total.
+func WithUsage(in, out int) Option {
+	return func(a *Agent) { a.usedIn, a.usedOut = in, out }
+}
+
 // New builds an Agent. provider, tools and approver are required; options tune
 // the rest. Defaults: 4096 max tokens, 20 steps, no compaction.
 func New(p provider.Provider, tools *tool.Registry, ap approval.Approver, opts ...Option) *Agent {

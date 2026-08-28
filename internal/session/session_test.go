@@ -58,9 +58,10 @@ func TestFileStoreLoadMissing(t *testing.T) {
 
 // fakeAgent implements the Agent interface for the persister tests.
 type fakeAgent struct {
-	replies []string
-	calls   int
-	hist    []provider.Message
+	replies      []string
+	calls        int
+	hist         []provider.Message
+	useIn, useOut int
 }
 
 func (f *fakeAgent) Run(_ context.Context, in string) (string, error) {
@@ -71,10 +72,13 @@ func (f *fakeAgent) Run(_ context.Context, in string) (string, error) {
 	}
 	f.calls++
 	f.hist = append(f.hist, provider.Message{Role: provider.RoleAssistant, Text: reply})
+	f.useIn += 100
+	f.useOut += 20
 	return reply, nil
 }
 
 func (f *fakeAgent) History() []provider.Message { return f.hist }
+func (f *fakeAgent) Usage() (int, int)           { return f.useIn, f.useOut }
 
 func TestPersistingSavesEveryTurn(t *testing.T) {
 	store, _ := NewFileStore(t.TempDir())
@@ -101,6 +105,13 @@ func TestPersistingSavesEveryTurn(t *testing.T) {
 	}
 	if got.Title != "primer mensaje" {
 		t.Errorf("título persistido = %q", got.Title)
+	}
+	// dos turnos del fakeAgent = 200 in / 40 out acumulados
+	if got.UsageIn != 200 || got.UsageOut != 40 {
+		t.Errorf("uso persistido = %d/%d, quiero 200/40", got.UsageIn, got.UsageOut)
+	}
+	if m := got.Meta(); m.UsageIn != 200 || m.UsageOut != 40 {
+		t.Errorf("Meta no proyecta el uso: %+v", m)
 	}
 }
 
