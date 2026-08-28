@@ -38,6 +38,12 @@ que lo envuelve.
   sin recursión.
 - **MCP** (Model Context Protocol): conecta servidores MCP por stdio y expone sus
   herramientas como nativas.
+- **Todo tracking**: la tool `todo_write` mantiene la lista de tareas del trabajo
+  actual y la TUI la muestra en vivo, tildando a medida que el modelo avanza.
+- **Hooks**: `~/.arnes/hooks.json` corre comandos alrededor de cada tool call —
+  `pre_tool` (puede bloquear la llamada, p. ej. tests antes de `git commit`) y
+  `post_tool` (reacciona, p. ej. `gofmt -w` tras un edit). Cada hook filtra por un
+  regex `match` contra el nombre de la tool y recibe el JSON de la llamada por stdin.
 - **TUI** con [Bubble Tea](https://github.com/charmbracelet/bubbletea): streaming
   de tokens en vivo, scroll, autocompletado de comandos, markdown renderizado con
   [glamour](https://github.com/charmbracelet/glamour). También un REPL de línea
@@ -115,7 +121,7 @@ Las variables ganan sobre el archivo de config.
 | `ARNES_RESUME` | id (o prefijo) de sesión a reanudar al arrancar |
 | `ARNES_RULES` | ruta a un archivo de reglas del proyecto (default: `AGENTS.md` en el cwd) |
 | `ARNES_AUTO_UPDATE` | `on` para que el chequeo diario instale la versión nueva por su cuenta |
-| `ARNES_CONFIG` / `ARNES_THEME` / `ARNES_MCP` / `ARNES_SUBAGENTS` | rutas alternativas |
+| `ARNES_CONFIG` / `ARNES_THEME` / `ARNES_MCP` / `ARNES_SUBAGENTS` / `ARNES_HOOKS` | rutas alternativas |
 | `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY` / `MOONSHOT_API_KEY` / `OPENAI_API_KEY` | API keys por entorno |
 
 ### Comandos (slash)
@@ -145,6 +151,8 @@ autocompletado.
 | `internal/compact` | estrategias de compactación de contexto |
 | `internal/subagent` | definiciones de subagentes + `DelegateTool` |
 | `internal/mcp` | cliente MCP stdio (JSON-RPC 2.0) |
+| `internal/hook` | hooks pre/post tool call (`hooks.json`) |
+| `internal/todo` | checklist de la tarea actual (store + tool `todo_write`) |
 | `internal/command` | dispatcher de slash commands (compartido TUI / REPL) |
 | `internal/update` | autoactualización: chequeo de releases en GitHub + reemplazo del binario |
 | `internal/tui` | front-end Bubble Tea |

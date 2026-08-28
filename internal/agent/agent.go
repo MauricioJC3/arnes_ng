@@ -26,11 +26,23 @@ type Agent struct {
 	compactor        compact.Strategy
 	compactThreshold int         // tokens; 0 disables auto-compaction
 	warn             func(error) // non-fatal notifications
+	hooks            Hooks       // pre/post tool-call hooks; nil disables them
 
 	stream  bool
 	onDelta func(string) // text deltas when streaming
 
 	usedIn, usedOut int // cumulative token usage for this agent
+}
+
+// Hooks runs user-configured commands around every tool call. A nil Hooks (the
+// default) is a no-op.
+type Hooks interface {
+	// PreTool runs before the tool executes. A non-nil error cancels the call;
+	// the error text is fed back to the model as the tool result.
+	PreTool(ctx context.Context, call provider.ToolCall) error
+	// PostTool runs after the tool executed, with its output and whether it
+	// errored. A non-empty return is appended to the tool result as a note.
+	PostTool(ctx context.Context, call provider.ToolCall, result string, isErr bool) string
 }
 
 // Option configures an Agent at construction.
@@ -62,6 +74,9 @@ func WithCompactThreshold(n int) Option { return func(a *Agent) { a.compactThres
 // WithWarnFn registers a sink for non-fatal notifications (e.g. a compaction
 // that failed and was skipped).
 func WithWarnFn(f func(error)) Option { return func(a *Agent) { a.warn = f } }
+
+// WithHooks registers pre/post tool-call hooks.
+func WithHooks(h Hooks) Option { return func(a *Agent) { a.hooks = h } }
 
 // WithStreaming turns on streaming when the provider implements provider.Streamer.
 func WithStreaming(on bool) Option { return func(a *Agent) { a.stream = on } }
@@ -202,18 +217,32 @@ func (a *Agent) runTool(ctx context.Context, call provider.ToolCall) provider.To
 			Content: "El usuario denegó la ejecución de esta herramienta."}
 	}
 
+	if a.hooks != nil {
+		if err := a.hooks.PreTool(ctx, call); err != nil {
+			return provider.ToolResult{CallID: call.ID, IsError: true, Content: err.Error()}
+		}
+	}
+
 	t, ok := a.tools.Get(call.Name)
 	if !ok {
 		return provider.ToolResult{CallID: call.ID, IsError: true,
 			Content: fmt.Sprintf("No existe una herramienta llamada %q.", call.Name)}
 	}
 
-	out, err := t.Execute(ctx, call.Input)
-	if err != nil {
-		return provider.ToolResult{CallID: call.ID, IsError: true,
-			Content: fmt.Sprintf("La herramienta %q falló: %v", call.Name, err)}
+	res := provider.ToolResult{CallID: call.ID}
+	if out, err := t.Execute(ctx, call.Input); err != nil {
+		res.IsError = true
+		res.Content = fmt.Sprintf("La herramienta %q falló: %v", call.Name, err)
+	} else {
+		res.Content = out
 	}
-	return provider.ToolResult{CallID: call.ID, Content: out}
+
+	if a.hooks != nil {
+		if note := a.hooks.PostTool(ctx, call, res.Content, res.IsError); note != "" {
+			res.Content += "\n\n[hook] " + note
+		}
+	}
+	return res
 }
 
 // toolDefs projects the registry into the provider-facing tool definitions.

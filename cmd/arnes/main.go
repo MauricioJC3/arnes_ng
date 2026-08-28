@@ -10,6 +10,7 @@
 //	ARNES_COMPACT_AT    token threshold for auto-compaction (default 120000)
 //	ARNES_SUBAGENTS     path to a subagents JSON file (default ~/.arnes/subagents.json)
 //	ARNES_MCP           path to an mcp.json file (default ~/.arnes/mcp.json)
+//	ARNES_HOOKS         path to a hooks.json file (default ~/.arnes/hooks.json)
 //	ARNES_UI            tui (default) | plain
 //	ARNES_STREAM        off to disable live token streaming in the TUI
 //	ARNES_THEME         path to a theme JSON file (default ~/.arnes/theme.json)
@@ -40,6 +41,7 @@ import (
 	"github.com/MauricioJC3/arnes_ng/internal/command"
 	"github.com/MauricioJC3/arnes_ng/internal/compact"
 	"github.com/MauricioJC3/arnes_ng/internal/config"
+	"github.com/MauricioJC3/arnes_ng/internal/hook"
 	"github.com/MauricioJC3/arnes_ng/internal/mcp"
 	"github.com/MauricioJC3/arnes_ng/internal/memory"
 	"github.com/MauricioJC3/arnes_ng/internal/provider"
@@ -222,6 +224,15 @@ func run() error {
 	}
 	a.subagents = subagent.NewRegistry(subDefs...)
 
+	hookCfg, err := loadHooks()
+	if err != nil {
+		return err
+	}
+	hookCount := len(hookCfg.PreTool) + len(hookCfg.PostTool)
+	if !hookCfg.Empty() {
+		a.hooks = hook.New(hookCfg, 30*time.Second)
+	}
+
 	cwd, _ := os.Getwd()
 	rulesText, rulesSrc, err := rules.Load(cwd, os.Getenv("ARNES_RULES"))
 	if err != nil {
@@ -276,8 +287,8 @@ func run() error {
 		return err
 	}
 
-	summary := fmt.Sprintf("proveedor %s · modelo %s · modo %s · %s · sesión %s · compactación %s · subagentes %d · mcp %d tools",
-		a.providerName, prov.Model(), a.mode, rulesLabel, a.sess.ID, a.ag.CompactorName(), a.subagents.Len(), mcpTools)
+	summary := fmt.Sprintf("proveedor %s · modelo %s · modo %s · %s · sesión %s · compactación %s · subagentes %d · mcp %d tools · hooks %d",
+		a.providerName, prov.Model(), a.mode, rulesLabel, a.sess.ID, a.ag.CompactorName(), a.subagents.Len(), mcpTools, hookCount)
 
 	if uiMode == "tui" {
 		theme, err := loadTheme()
@@ -341,6 +352,20 @@ func loadMCP() (mcp.Config, error) {
 	return mcp.LoadFile(path)
 }
 
+// loadHooks reads the hooks config (ARNES_HOOKS or the default path). A missing
+// file yields an empty config (no hooks).
+func loadHooks() (hook.Config, error) {
+	path := os.Getenv("ARNES_HOOKS")
+	if path == "" {
+		p, err := hook.DefaultPath()
+		if err != nil {
+			return hook.Config{}, err
+		}
+		path = p
+	}
+	return hook.LoadFile(path)
+}
+
 // loadSubagents reads the subagents config (ARNES_SUBAGENTS or the default
 // path), falling back to the built-in set when the file is absent.
 func loadSubagents() ([]subagent.Definition, error) {
@@ -372,7 +397,8 @@ type app struct {
 	compactAt     int
 	streaming     bool
 	deltas        chan string
-	rules         string // project rules, already wrapped for the system prompt
+	hooks         agent.Hooks // pre/post tool-call hooks; nil when none configured
+	rules         string      // project rules, already wrapped for the system prompt
 
 	sess            *session.Session
 	ag              *agent.Agent
@@ -523,6 +549,9 @@ func (a *app) rebuild(sess *session.Session, history []provider.Message) {
 	if a.autoCompactor != nil {
 		opts = append(opts, agent.WithCompactor(a.autoCompactor), agent.WithCompactThreshold(a.compactAt))
 	}
+	if a.hooks != nil {
+		opts = append(opts, agent.WithHooks(a.hooks))
+	}
 	if a.streaming {
 		opts = append(opts, agent.WithStreaming(true))
 		if a.deltas != nil {
@@ -545,6 +574,9 @@ func (a *app) FreshConversation() command.Conversation {
 	opts := []agent.Option{
 		agent.WithSystem(systemPrompt + a.rules + modeAddendum(a.mode)),
 		agent.WithWarnFn(func(err error) { fmt.Fprintln(os.Stderr, "arnés:", err) }),
+	}
+	if a.hooks != nil {
+		opts = append(opts, agent.WithHooks(a.hooks))
 	}
 	if a.streaming {
 		opts = append(opts, agent.WithStreaming(true))
