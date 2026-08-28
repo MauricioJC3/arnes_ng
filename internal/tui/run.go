@@ -45,26 +45,27 @@ func Run(o Options) error {
 		Theme:      o.Theme,
 		Greeting:   o.Greeting,
 		ListModels: o.ListModels,
+		MouseOn:    mouseEnabled(),
 	})
 	opts := []tea.ProgramOption{tea.WithAltScreen()}
 	if mouseEnabled() {
-		// Capturing the mouse gives wheel scroll over the transcript. It also
-		// takes over the terminal's own text selection -- in most terminals you
-		// hold Shift to select while the mouse is captured. Set ARNES_MOUSE=off
-		// to disable it.
+		// Capturing the mouse gives wheel scroll, but it takes over the
+		// terminal's own click-drag text selection. Off by default so copying
+		// just works; toggle it at runtime with Ctrl+O, or start with
+		// ARNES_MOUSE=on.
 		opts = append(opts, tea.WithMouseCellMotion())
 	}
 	_, err := tea.NewProgram(m, opts...).Run()
 	return err
 }
 
-// mouseEnabled reports whether to capture the mouse (wheel scroll). On by
-// default; ARNES_MOUSE=off|0|false|no turns it off.
+// mouseEnabled reports whether to capture the mouse (wheel scroll) at startup.
+// Off by default; ARNES_MOUSE=on|1|true|yes turns it on.
 func mouseEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("ARNES_MOUSE"))) {
-	case "off", "0", "false", "no":
-		return false
-	default:
+	case "on", "1", "true", "yes":
 		return true
+	default:
+		return false
 	}
 }

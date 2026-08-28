@@ -36,6 +36,7 @@ type Config struct {
 	Deltas     chan string      // streamed text chunks; nil when streaming is off
 	Notices    chan string      // out-of-band lines (e.g. "update available"); nil to disable
 	Todos      chan []todo.Item // live task checklist; nil to disable the panel
+	MouseOn    bool             // whether the mouse was captured at startup (Ctrl+O toggles)
 	Theme      Theme
 	Greeting   string
 	// ListModels fetches a provider's model list for the /connect picker; nil
@@ -109,6 +110,7 @@ type Model struct {
 	listModels ListModelsFunc
 	quitting   bool
 	quitHint   bool // first Esc arms the "Esc again to quit" prompt
+	mouseOn    bool // mouse capture state; Ctrl+O toggles it (off = terminal text selection)
 
 	history []string // submitted inputs, for ↑/↓ recall
 	histAt  int      // index into history; len(history) == showing the draft
@@ -163,6 +165,7 @@ func New(cfg Config) Model {
 		deltas:     cfg.Deltas,
 		notices:    cfg.Notices,
 		todos:      cfg.Todos,
+		mouseOn:    cfg.MouseOn,
 		listModels: cfg.ListModels,
 		results:    make(chan runResult, 1),
 		goalCh:     make(chan goalStepMsg, 4),
@@ -223,6 +226,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// clears a half-typed message.
 		if k == "ctrl+c" {
 			return m.cancelWithCtrlC()
+		}
+
+		// Ctrl+O toggles mouse capture: on = wheel scroll, off = the terminal's
+		// own text selection (so you can copy).
+		if k == "ctrl+o" {
+			m.mouseOn = !m.mouseOn
+			if m.mouseOn {
+				m.add(kindInfo, "mouse ON · rueda para scrollear (Ctrl+O para volver a seleccionar texto)")
+				return m, tea.EnableMouseCellMotion
+			}
+			m.add(kindInfo, "mouse OFF · podés seleccionar y copiar texto (Ctrl+O para la rueda de scroll)")
+			return m, tea.DisableMouse
 		}
 
 		if m.connect != nil {

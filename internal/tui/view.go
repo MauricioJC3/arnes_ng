@@ -276,6 +276,9 @@ func (m Model) statusBar() string {
 	if m.goalIter > 0 {
 		seg = append(seg, m.styles.Tool.Render(fmt.Sprintf("⟳ objetivo %d/%d", m.goalIter, m.goalMax)))
 	}
+	if m.mouseOn {
+		seg = append(seg, "🖱 scroll (Ctrl+O: copiar)")
+	}
 	if m.busy {
 		seg = append(seg, m.sp.View()+" trabajando")
 	} else if !m.vp.AtBottom() {
