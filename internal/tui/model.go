@@ -75,7 +75,7 @@ const (
 	stateInput       uiState = iota // typing at the prompt (the command menu may be open)
 	stateBusy                       // an agent turn or goal loop is running
 	stateApproval                   // a tool call is waiting for y/n
-	stateConnectForm               // the /connect picker is open
+	stateConnectForm                // the /connect picker is open
 	stateModelForm                  // the /model picker is open
 )
 
@@ -106,26 +106,21 @@ type Model struct {
 	theme     Theme
 	styles    Styles
 
-	transcript // scrollback: entries, in-flight text, viewport, markdown renderer
+	transcript  // scrollback: entries, in-flight text, viewport, markdown renderer
+	promptInput // the text prompt, its "/…" command menu, and the ↑/↓ recall history
 
-	ta textarea.Model
 	sp spinner.Model
 
 	width, height int
 
 	busy       bool
 	pending    *approval.Request
-	menu       commandMenu
 	connect    *connectForm
 	model      *modelForm
 	listModels ListModelsFunc
 	quitting   bool
 	quitHint   bool // first Esc arms the "Esc again to quit" prompt
 	mouseOn    bool // mouse capture state; Ctrl+O toggles it (off = terminal text selection)
-
-	history []string // submitted inputs, for ↑/↓ recall
-	histAt  int      // index into history; len(history) == showing the draft
-	draft   string   // the input the user was typing before recalling
 
 	goalCh            chan goalStepMsg
 	goalIter, goalMax int // >0 while a /goal loop is running
@@ -143,14 +138,6 @@ type Model struct {
 func New(cfg Config) Model {
 	styles := cfg.Theme.Styles()
 
-	ta := textarea.New()
-	ta.Placeholder = "escribí un mensaje…  (/help · Esc Esc para salir)"
-	ta.Prompt = styles.Accent.Render("❯ ")
-	ta.ShowLineNumbers = false
-	ta.SetHeight(3)
-	ta.CharLimit = 0
-	ta.Focus()
-
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(styles.Accent))
 
 	prov := cfg.ProviderFn
@@ -160,24 +147,24 @@ func New(cfg Config) Model {
 	}
 
 	m := Model{
-		conv:       cfg.Conv,
-		prov:       prov,
-		sessionID:  cfg.SessionID,
-		stats:      cfg.Stats,
-		cost:       cfg.Cost,
-		theme:      cfg.Theme,
-		styles:     styles,
-		transcript: transcript{styles: styles, mdStyle: cfg.MarkdownStyle},
-		ta:         ta,
-		sp:         sp,
-		approvals:  cfg.Approvals,
-		deltas:     cfg.Deltas,
-		notices:    cfg.Notices,
-		todos:      cfg.Todos,
-		mouseOn:    cfg.MouseOn,
-		listModels: cfg.ListModels,
-		results:    make(chan runResult, 1),
-		goalCh:     make(chan goalStepMsg, 4),
+		conv:        cfg.Conv,
+		prov:        prov,
+		sessionID:   cfg.SessionID,
+		stats:       cfg.Stats,
+		cost:        cfg.Cost,
+		theme:       cfg.Theme,
+		styles:      styles,
+		transcript:  transcript{styles: styles, mdStyle: cfg.MarkdownStyle},
+		promptInput: newPromptInput(styles),
+		sp:          sp,
+		approvals:   cfg.Approvals,
+		deltas:      cfg.Deltas,
+		notices:     cfg.Notices,
+		todos:       cfg.Todos,
+		mouseOn:     cfg.MouseOn,
+		listModels:  cfg.ListModels,
+		results:     make(chan runResult, 1),
+		goalCh:      make(chan goalStepMsg, 4),
 	}
 	if cfg.Greeting != "" {
 		m.entries = append(m.entries, entry{kind: kindInfo, text: cfg.Greeting})
@@ -311,36 +298,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.vp.GotoBottom()
 			return m, nil
 		case "up":
-			// Priority: continue an in-progress history recall; then, with a
-			// non-empty input, let the textarea move the cursor; then, if the
-			// transcript is scrolled up, keep scrolling it; otherwise (at the
-			// prompt) start history recall, or scroll when there is no history.
-			switch {
-			case m.histAt < len(m.history):
-				m.histPrev()
+			switch m.promptInput.onUp(m.vp.AtBottom()) {
+			case navConsumed:
 				return m, nil
-			case m.ta.Value() != "":
-				// fall through to the textarea
-			case !m.vp.AtBottom():
+			case navScrollUp:
 				m.vp.ScrollUp(1)
 				return m, nil
-			case len(m.history) > 0:
-				m.histPrev()
-				return m, nil
-			default:
-				m.vp.ScrollUp(1)
-				return m, nil
+			case navTextarea:
+				// fall through to the textarea below
 			}
 		case "down":
-			switch {
-			case m.histAt < len(m.history):
-				m.histNext()
+			switch m.promptInput.onDown(m.vp.AtBottom()) {
+			case navConsumed:
 				return m, nil
-			case m.ta.Value() != "":
-				// fall through to the textarea
-			case !m.vp.AtBottom():
+			case navScrollDown:
 				m.vp.ScrollDown(1)
 				return m, nil
+			case navTextarea:
+				// fall through to the textarea below
 			}
 		}
 		if m.pending != nil {
@@ -449,50 +424,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.menu.update(m.ta.Value())
 		if _, isKey := msg.(tea.KeyMsg); isKey {
 			// editing the input detaches it from history navigation
-			m.histAt = len(m.history)
+			m.promptInput.detachHistory()
 		}
 	}
 	return m, tea.Batch(cmds...)
-}
-
-// histPrev recalls an older input into the textarea. Returns false when there is
-// nothing older.
-func (m *Model) histPrev() bool {
-	if len(m.history) == 0 || m.histAt == 0 {
-		return false
-	}
-	if m.histAt == len(m.history) {
-		m.draft = m.ta.Value()
-	}
-	m.histAt--
-	m.ta.SetValue(m.history[m.histAt])
-	m.ta.CursorEnd()
-	return true
-}
-
-// histNext moves toward the newest input, restoring the saved draft past the end.
-func (m *Model) histNext() bool {
-	if m.histAt >= len(m.history) {
-		return false
-	}
-	m.histAt++
-	if m.histAt == len(m.history) {
-		m.ta.SetValue(m.draft)
-	} else {
-		m.ta.SetValue(m.history[m.histAt])
-	}
-	m.ta.CursorEnd()
-	return true
-}
-
-// remember appends a submitted input to the recall history (skips duplicates of
-// the immediately previous entry).
-func (m *Model) remember(text string) {
-	if n := len(m.history); n == 0 || m.history[n-1] != text {
-		m.history = append(m.history, text)
-	}
-	m.histAt = len(m.history)
-	m.draft = ""
 }
 
 // driveConnectForm feeds one key to the /connect picker and acts on the outcome:
@@ -669,7 +604,7 @@ func (m Model) cancelWithCtrlC() (tea.Model, tea.Cmd) {
 	case m.ta.Value() != "":
 		m.ta.SetValue("")
 		m.menu.update("")
-		m.histAt = len(m.history)
+		m.promptInput.detachHistory()
 	}
 	return m, nil
 }
