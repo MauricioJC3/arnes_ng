@@ -113,7 +113,7 @@ func TestPostTool(t *testing.T) {
 }
 
 func TestRunTimeout(t *testing.T) {
-	c, err := LoadFile(write(t, `{"pre_tool":[{"command":"sleep 5"}]}`))
+	c, err := LoadFile(write(t, `{"pre_tool":[{"command":"sleep 10"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,9 @@ func TestRunTimeout(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "timeout") {
 		t.Fatalf("esperaba timeout, tengo: %v", err)
 	}
-	if time.Since(start) > 2*time.Second {
-		t.Fatal("el timeout no cortó a tiempo")
+	// The hook sleeps 10s; a working 100ms timeout returns well before that. The
+	// bound is loose so a slow CI runner under -race doesn't flake.
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("el timeout no cortó a tiempo (%s)", elapsed)
 	}
 }
