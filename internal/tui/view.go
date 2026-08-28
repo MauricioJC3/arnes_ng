@@ -111,14 +111,14 @@ func (m Model) View() string {
 	}
 
 	var foot string
-	switch {
-	case m.connect != nil:
+	switch m.state() {
+	case stateConnectForm:
 		foot = m.formBox(m.connect.view(m.styles), m.theme.Accent)
-	case m.model != nil:
+	case stateModelForm:
 		foot = m.formBox(m.model.view(m.styles), m.theme.Accent)
-	case m.pending != nil:
+	case stateApproval:
 		foot = m.approvalBox()
-	case m.busy:
+	case stateBusy:
 		foot = m.inputBox(m.styles.Muted.Render(m.sp.View() + " pensando…   " + m.styles.Muted.Render("Ctrl+C para cancelar")))
 	default:
 		box := m.inputBox(m.ta.View())

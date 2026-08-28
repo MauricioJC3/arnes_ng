@@ -785,6 +785,31 @@ func TestModelGoalRun(t *testing.T) {
 	}
 }
 
+func TestModelStateReflectsMode(t *testing.T) {
+	m, _ := newModel(t, &fakeConv{})
+	if m.state() != stateInput {
+		t.Fatalf("modo inicial = %v, quería stateInput", m.state())
+	}
+
+	m.busy = true
+	if m.state() != stateBusy {
+		t.Fatalf("con busy = %v, quería stateBusy", m.state())
+	}
+
+	// una aprobación pendiente gana sobre busy
+	req := approval.Request{Call: provider.ToolCall{Name: "bash"}, Response: make(chan bool, 1)}
+	m.pending = &req
+	if m.state() != stateApproval {
+		t.Fatalf("con pending = %v, quería stateApproval", m.state())
+	}
+
+	// los pickers ganan sobre todo lo demás
+	m.connect = newConnectForm()
+	if m.state() != stateConnectForm {
+		t.Fatalf("con connect abierto = %v, quería stateConnectForm", m.state())
+	}
+}
+
 func TestModelRunResultAppendsWhenNoStreaming(t *testing.T) {
 	m, _ := newModel(t, &fakeConv{reply: "respuesta completa"})
 	m.ta.SetValue("hola")

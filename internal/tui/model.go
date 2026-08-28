@@ -84,6 +84,36 @@ type entry struct {
 	rendered string // cached display form (e.g. glamour markdown for assistant)
 }
 
+// uiState is the single top-level mode of the UI. It is derived from the model
+// fields by state(); Update and View both switch on it so their branch order
+// can never drift apart.
+type uiState int
+
+const (
+	stateInput       uiState = iota // typing at the prompt (the command menu may be open)
+	stateBusy                       // an agent turn or goal loop is running
+	stateApproval                   // a tool call is waiting for y/n
+	stateConnectForm               // the /connect picker is open
+	stateModelForm                  // the /model picker is open
+)
+
+// state reports the current UI mode. Order matters: the pickers sit on top of
+// everything, then a pending approval, then a running turn.
+func (m Model) state() uiState {
+	switch {
+	case m.connect != nil:
+		return stateConnectForm
+	case m.model != nil:
+		return stateModelForm
+	case m.pending != nil:
+		return stateApproval
+	case m.busy:
+		return stateBusy
+	default:
+		return stateInput
+	}
+}
+
 // Model is the Bubble Tea model.
 type Model struct {
 	conv      command.Conversation
@@ -243,11 +273,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.DisableMouse
 		}
 
-		if m.connect != nil {
+		switch m.state() {
+		case stateConnectForm:
 			return m.driveConnectForm(msg)
-		}
-
-		if m.model != nil {
+		case stateModelForm:
 			return m.driveModelForm(msg)
 		}
 
@@ -445,7 +474,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, textarea.Blink
 	}
 
-	if !m.busy && m.pending == nil && m.connect == nil && m.model == nil {
+	if m.state() == stateInput {
 		var c tea.Cmd
 		m.ta, c = m.ta.Update(msg)
 		cmds = append(cmds, c)
