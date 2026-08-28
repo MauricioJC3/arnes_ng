@@ -11,6 +11,7 @@
 //	ARNES_SUBAGENTS     path to a subagents JSON file (default ~/.arnes/subagents.json)
 //	ARNES_MCP           path to an mcp.json file (default ~/.arnes/mcp.json)
 //	ARNES_HOOKS         path to a hooks.json file (default ~/.arnes/hooks.json)
+//	ARNES_LSP           path to an lsp.json file (default ~/.arnes/lsp.json)
 //	ARNES_UI            tui (default) | plain
 //	ARNES_STREAM        off to disable live token streaming in the TUI
 //	ARNES_THEME         path to a theme JSON file (default ~/.arnes/theme.json)
@@ -43,6 +44,7 @@ import (
 	"github.com/MauricioJC3/arnes_ng/internal/compact"
 	"github.com/MauricioJC3/arnes_ng/internal/config"
 	"github.com/MauricioJC3/arnes_ng/internal/hook"
+	"github.com/MauricioJC3/arnes_ng/internal/lsp"
 	"github.com/MauricioJC3/arnes_ng/internal/mcp"
 	"github.com/MauricioJC3/arnes_ng/internal/memory"
 	"github.com/MauricioJC3/arnes_ng/internal/provider"
@@ -84,6 +86,9 @@ Trabajás sobre el código del proyecto en el directorio actual.
   varios pasos, armá la lista al principio y actualizala (pasando SIEMPRE la lista completa) a
   medida que avanzás: un solo ítem in_progress por vez, marcá completed apenas terminás cada uno.
   Para tareas triviales de un paso no la uses.
+- lsp: consultá el language server sobre un archivo — diagnósticos (errores/warnings),
+  definición o hover (tipo/doc) de un símbolo. Útil para verificar un cambio o entender un
+  símbolo sin leer todo. Puede no estar configurado para el lenguaje del archivo.
 - remember / recall: memoria persistente entre sesiones. Guardá decisiones, convenciones y
   datos del proyecto que no sean obvios del código. Consultala cuando el usuario haga
   referencia a algo previo.
@@ -246,6 +251,13 @@ func run() error {
 		rulesLabel = "reglas " + rulesSrc
 	}
 
+	lspCfg, err := loadLSP()
+	if err != nil {
+		return err
+	}
+	lspMgr := lsp.NewManager(lspCfg, cwd)
+	defer lspMgr.CloseAll()
+
 	// The base pool has every tool except delegate; the agent's registry is the
 	// base plus delegate. Subagents draw from the base only (no recursion).
 	base := tool.NewRegistry(
@@ -256,6 +268,9 @@ func run() error {
 		tool.WriteFile{},
 		tool.EditFile{},
 		tool.TodoWrite{Store: todoStore},
+		tool.LSP{Client: func(ctx context.Context, path string) (tool.LSPClient, error) {
+			return lspMgr.For(ctx, path)
+		}},
 		tool.Remember{Store: mem},
 		tool.Recall{Store: mem},
 	)
@@ -290,8 +305,8 @@ func run() error {
 		return err
 	}
 
-	summary := fmt.Sprintf("proveedor %s · modelo %s · modo %s · %s · sesión %s · compactación %s · subagentes %d · mcp %d tools · hooks %d",
-		a.providerName, prov.Model(), a.mode, rulesLabel, a.sess.ID, a.ag.CompactorName(), a.subagents.Len(), mcpTools, hookCount)
+	summary := fmt.Sprintf("proveedor %s · modelo %s · modo %s · %s · sesión %s · compactación %s · subagentes %d · mcp %d tools · hooks %d · lsp %d",
+		a.providerName, prov.Model(), a.mode, rulesLabel, a.sess.ID, a.ag.CompactorName(), a.subagents.Len(), mcpTools, hookCount, lspMgr.Configured())
 
 	if uiMode == "tui" {
 		theme, err := loadTheme()
@@ -367,6 +382,20 @@ func loadHooks() (hook.Config, error) {
 		path = p
 	}
 	return hook.LoadFile(path)
+}
+
+// loadLSP reads the LSP config (ARNES_LSP or the default path), falling back to
+// the built-in default (gopls for Go) when the file is absent.
+func loadLSP() (lsp.Config, error) {
+	path := os.Getenv("ARNES_LSP")
+	if path == "" {
+		p, err := lsp.DefaultPath()
+		if err != nil {
+			return lsp.Config{}, err
+		}
+		path = p
+	}
+	return lsp.LoadFile(path)
 }
 
 // loadSubagents reads the subagents config (ARNES_SUBAGENTS or the default
