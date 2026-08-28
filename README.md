@@ -72,8 +72,8 @@ Las variables ganan sobre el archivo de config.
 ### Teclas (TUI)
 
 `Enter` enviar · `Esc` cancelar el turno en curso · `shift+tab` ciclar modo ·
-`↑↓` scroll (con el input vacío) · `PgUp/PgDn` `Ctrl+U/Ctrl+D` `Home/End` scroll ·
-`Ctrl+C` salir.
+`↑↓` recuperar mensajes previos (input vacío) o scroll si no hay historial ·
+`PgUp/PgDn` `Ctrl+U/Ctrl+D` `Home/End` scroll · `Ctrl+C` salir.
 
 ## Estructura
 

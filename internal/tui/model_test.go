@@ -380,6 +380,69 @@ func TestModelAssistantEntryIsMarkdownRendered(t *testing.T) {
 	}
 }
 
+func TestModelInputHistory(t *testing.T) {
+	m, _ := newModel(t, &fakeConv{})
+
+	send := func(s string) {
+		t.Helper()
+		m.ta.SetValue(s)
+		tm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = tm.(Model)
+		select { // completar el turno para salir de busy
+		case res := <-m.results:
+			tm, _ = m.Update(res)
+			m = tm.(Model)
+		case <-time.After(time.Second):
+			t.Fatal("el turno no completó")
+		}
+	}
+	up := func() { tm, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp}); m = tm.(Model) }
+	down := func() { tm, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown}); m = tm.(Model) }
+
+	send("primero")
+	send("segundo")
+
+	up()
+	if m.ta.Value() != "segundo" {
+		t.Fatalf("↑ = %q, quiero 'segundo'", m.ta.Value())
+	}
+	up()
+	if m.ta.Value() != "primero" {
+		t.Fatalf("↑↑ = %q, quiero 'primero'", m.ta.Value())
+	}
+	up() // no hay nada más viejo
+	if m.ta.Value() != "primero" {
+		t.Fatalf("↑ de más = %q, debería quedarse en 'primero'", m.ta.Value())
+	}
+	down()
+	if m.ta.Value() != "segundo" {
+		t.Fatalf("↓ = %q, quiero 'segundo'", m.ta.Value())
+	}
+	down() // vuelve al draft vacío
+	if m.ta.Value() != "" {
+		t.Fatalf("↓ pasando el final = %q, quiero el draft vacío", m.ta.Value())
+	}
+}
+
+func TestModelInputHistorySkipsConsecutiveDups(t *testing.T) {
+	m, _ := newModel(t, &fakeConv{})
+	for i := 0; i < 3; i++ {
+		m.ta.SetValue("igual")
+		tm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = tm.(Model)
+		select {
+		case res := <-m.results:
+			tm, _ = m.Update(res)
+			m = tm.(Model)
+		case <-time.After(time.Second):
+			t.Fatal("el turno no completó")
+		}
+	}
+	if len(m.history) != 1 {
+		t.Fatalf("history = %v, esperaba 1 entrada (sin duplicados consecutivos)", m.history)
+	}
+}
+
 func TestModelUpDownScrollsWhenInputEmpty(t *testing.T) {
 	m, _ := newModel(t, &fakeConv{})
 	for i := 0; i < 60; i++ {

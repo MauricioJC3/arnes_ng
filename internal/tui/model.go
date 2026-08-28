@@ -85,6 +85,10 @@ type Model struct {
 	connect  *connectForm
 	quitting bool
 
+	history []string // submitted inputs, for ↑/↓ recall
+	histAt  int      // index into history; len(history) == showing the draft
+	draft   string   // the input the user was typing before recalling
+
 	approvals chan approval.Request
 	deltas    chan string
 	results   chan runResult
@@ -220,12 +224,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.vp.GotoBottom()
 			return m, nil
 		case "up":
-			if strings.TrimSpace(m.ta.Value()) == "" {
+			// history recall while navigating, or from an empty input when there
+			// is history; otherwise scroll (empty input) or move the cursor.
+			if m.histAt < len(m.history) || (m.ta.Value() == "" && len(m.history) > 0) {
+				m.histPrev() // a no-op at the oldest entry; still consumes the key
+				return m, nil
+			}
+			if m.ta.Value() == "" {
 				m.vp.ScrollUp(1)
 				return m, nil
 			}
 		case "down":
-			if strings.TrimSpace(m.ta.Value()) == "" {
+			if m.histAt < len(m.history) {
+				m.histNext()
+				return m, nil
+			}
+			if m.ta.Value() == "" {
 				m.vp.ScrollDown(1)
 				return m, nil
 			}
@@ -301,8 +315,52 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ta, c = m.ta.Update(msg)
 		cmds = append(cmds, c)
 		m.menu.update(m.ta.Value())
+		if _, isKey := msg.(tea.KeyMsg); isKey {
+			// editing the input detaches it from history navigation
+			m.histAt = len(m.history)
+		}
 	}
 	return m, tea.Batch(cmds...)
+}
+
+// histPrev recalls an older input into the textarea. Returns false when there is
+// nothing older.
+func (m *Model) histPrev() bool {
+	if len(m.history) == 0 || m.histAt == 0 {
+		return false
+	}
+	if m.histAt == len(m.history) {
+		m.draft = m.ta.Value()
+	}
+	m.histAt--
+	m.ta.SetValue(m.history[m.histAt])
+	m.ta.CursorEnd()
+	return true
+}
+
+// histNext moves toward the newest input, restoring the saved draft past the end.
+func (m *Model) histNext() bool {
+	if m.histAt >= len(m.history) {
+		return false
+	}
+	m.histAt++
+	if m.histAt == len(m.history) {
+		m.ta.SetValue(m.draft)
+	} else {
+		m.ta.SetValue(m.history[m.histAt])
+	}
+	m.ta.CursorEnd()
+	return true
+}
+
+// remember appends a submitted input to the recall history (skips duplicates of
+// the immediately previous entry).
+func (m *Model) remember(text string) {
+	if n := len(m.history); n == 0 || m.history[n-1] != text {
+		m.history = append(m.history, text)
+	}
+	m.histAt = len(m.history)
+	m.draft = ""
 }
 
 // driveConnectForm feeds one key to the /connect picker and acts on the outcome.
@@ -336,6 +394,7 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	if text == "" {
 		return m, nil
 	}
+	m.remember(text)
 	m.ta.Reset()
 	m.menu = commandMenu{}
 
