@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ocFakeServer serves one canned reply and captures the request body it received.
@@ -217,7 +218,16 @@ func TestOpenAICompatStreamToolCall(t *testing.T) {
 	}
 }
 
+// fastRetries shrinks the backoff for tests and restores it afterwards.
+func fastRetries(t *testing.T) {
+	t.Helper()
+	ba, bb, bc := retryAttempts, retryBase, retryCap
+	retryAttempts, retryBase, retryCap = 3, time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() { retryAttempts, retryBase, retryCap = ba, bb, bc })
+}
+
 func TestOpenAICompatStreamHTTPError(t *testing.T) {
+	fastRetries(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
@@ -225,6 +235,49 @@ func TestOpenAICompatStreamHTTPError(t *testing.T) {
 	oc := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, Model: "x"})
 	if _, err := oc.StreamMessage(context.Background(), Request{Messages: []Message{{Role: RoleUser, Text: "x"}}}, nil); err == nil {
 		t.Fatal("esperaba error HTTP")
+	}
+}
+
+func TestOpenAICompatRetriesThenSucceeds(t *testing.T) {
+	fastRetries(t)
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls < 3 { // dos 429 y a la tercera va
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	oc := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, APIKey: "k", Model: "x"})
+	resp, err := oc.SendMessage(context.Background(), Request{Messages: []Message{{Role: RoleUser, Text: "hola"}}})
+	if err != nil {
+		t.Fatalf("debería haber reintentado y salido bien: %v", err)
+	}
+	if resp.Text != "ok" || calls != 3 {
+		t.Fatalf("text=%q calls=%d (quiero 'ok' y 3)", resp.Text, calls)
+	}
+}
+
+func TestOpenAICompatDoesNotRetry4xx(t *testing.T) {
+	fastRetries(t)
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":{"message":"bad key"}}`)
+	}))
+	t.Cleanup(srv.Close)
+	oc := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, Model: "x"})
+	if _, err := oc.SendMessage(context.Background(), Request{Messages: []Message{{Role: RoleUser, Text: "x"}}}); err == nil {
+		t.Fatal("esperaba error")
+	}
+	if calls != 1 {
+		t.Fatalf("un 401 no se reintenta; hubo %d llamadas", calls)
 	}
 }
 

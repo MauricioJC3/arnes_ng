@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -75,6 +77,80 @@ func (o *OpenAICompat) SetModel(model string) {
 	}
 }
 
+// retry tuning (package vars so tests can shrink the backoff).
+var (
+	retryAttempts = 4
+	retryBase     = 500 * time.Millisecond
+	retryCap      = 8 * time.Second
+)
+
+// post sends the marshalled payload to /chat/completions, retrying 429 and 5xx
+// (and connection errors) with exponential backoff + jitter, honoring a
+// Retry-After header when present. The caller closes the returned body.
+func (o *OpenAICompat) post(ctx context.Context, body []byte, accept string) (*http.Response, error) {
+	var lastErr error
+	for attempt := 0; attempt < retryAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-time.After(backoff(attempt)):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/chat/completions", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if accept != "" {
+			req.Header.Set("Accept", accept)
+		}
+		if o.apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+o.apiKey)
+		}
+
+		resp, err := o.http.Do(req)
+		if err != nil {
+			lastErr = err
+			continue // connection error -> retry
+		}
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			wait := retryAfter(resp)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("openai_compat: HTTP %d", resp.StatusCode)
+			if wait > 0 && attempt < retryAttempts-1 {
+				select {
+				case <-time.After(wait):
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			}
+			continue
+		}
+		return resp, nil // success, or a non-retryable 4xx
+	}
+	return nil, fmt.Errorf("openai_compat: sin respuesta tras %d intentos: %w", retryAttempts, lastErr)
+}
+
+func backoff(attempt int) time.Duration {
+	d := retryBase << (attempt - 1)
+	if d > retryCap {
+		d = retryCap
+	}
+	jitter := time.Duration(rand.Int63n(int64(d)/2 + 1))
+	return d/2 + jitter
+}
+
+func retryAfter(resp *http.Response) time.Duration {
+	if v := resp.Header.Get("Retry-After"); v != "" {
+		if secs, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return 0
+}
+
 // SendMessage builds the chat-completions payload, POSTs it, and normalizes the
 // reply into a Response.
 func (o *OpenAICompat) SendMessage(ctx context.Context, req Request) (Response, error) {
@@ -96,18 +172,9 @@ func (o *OpenAICompat) SendMessage(ctx context.Context, req Request) (Response, 
 		return Response{}, err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/chat/completions", bytes.NewReader(body))
+	httpResp, err := o.post(ctx, body, "")
 	if err != nil {
 		return Response{}, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if o.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+o.apiKey)
-	}
-
-	httpResp, err := o.http.Do(httpReq)
-	if err != nil {
-		return Response{}, fmt.Errorf("openai_compat: %w", err)
 	}
 	defer httpResp.Body.Close()
 
@@ -155,19 +222,12 @@ func (o *OpenAICompat) StreamMessage(ctx context.Context, req Request, onDelta f
 	if err != nil {
 		return Response{}, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/chat/completions", bytes.NewReader(body))
+
+	// Retry only the connection + initial status; once bytes are streaming a
+	// mid-stream failure can't be resumed.
+	httpResp, err := o.post(ctx, body, "text/event-stream")
 	if err != nil {
 		return Response{}, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
-	if o.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+o.apiKey)
-	}
-
-	httpResp, err := o.http.Do(httpReq)
-	if err != nil {
-		return Response{}, fmt.Errorf("openai_compat: %w", err)
 	}
 	defer httpResp.Body.Close()
 
