@@ -19,6 +19,7 @@ type fakeApp struct {
 	compacts  int
 	connected [3]string
 	mode      string
+	updated   int
 }
 
 func (*fakeApp) Run(context.Context, string) (string, error) { return "", nil }
@@ -35,6 +36,8 @@ func (f *fakeApp) Connect(p, model, key string) (string, error) {
 }
 
 func (f *fakeApp) CostReport() (string, error) { return "sesión actual: $0.0000\nhistorial: (vacío)", nil }
+
+func (f *fakeApp) SelfUpdate(context.Context) (string, error) { f.updated++; return "actualizado a v9.9.9", nil }
 
 func (f *fakeApp) Mode() string { return cmp.Or(f.mode, "normal") }
 func (f *fakeApp) SetMode(name string) (string, error) {
@@ -209,6 +212,16 @@ func TestDispatch(t *testing.T) {
 		}
 		if _, err := Dispatch("/cost", bareConv{}, p); err == nil {
 			t.Fatal("esperaba error sin soporte de costo")
+		}
+	})
+
+	t.Run("/update-arnes delega en SelfUpdate", func(t *testing.T) {
+		r, err := Dispatch("/update-arnes", app, p)
+		if err != nil || app.updated != 1 || !strings.Contains(r.Output, "actualizado") {
+			t.Fatalf("r=%+v updated=%d err=%v", r, app.updated, err)
+		}
+		if _, err := Dispatch("/update-arnes", bareConv{}, p); err == nil {
+			t.Fatal("esperaba error 'no se puede autoactualizar'")
 		}
 	})
 

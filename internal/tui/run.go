@@ -20,6 +20,7 @@ type Options struct {
 	Cost      func() string
 	Approvals chan approval.Request
 	Deltas    chan string
+	Notices   chan string // out-of-band lines (e.g. "update available"); nil to disable
 	Theme     Theme
 	Greeting  string
 }
@@ -34,6 +35,7 @@ func Run(o Options) error {
 		Cost:      o.Cost,
 		Approvals: o.Approvals,
 		Deltas:    o.Deltas,
+		Notices:   o.Notices,
 		Theme:     o.Theme,
 		Greeting:  o.Greeting,
 	})

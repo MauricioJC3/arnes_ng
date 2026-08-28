@@ -29,6 +29,7 @@ type Config struct {
 	Cost      func() string // running session cost, e.g. "$0.0421"; nil/"" hides it
 	Approvals chan approval.Request
 	Deltas    chan string // streamed text chunks; nil when streaming is off
+	Notices   chan string // out-of-band lines (e.g. "update available"); nil to disable
 	Theme     Theme
 	Greeting  string
 }
@@ -48,6 +49,10 @@ type approvalMsg approval.Request
 
 // deltaMsg is one streamed text chunk.
 type deltaMsg string
+
+// noticeMsg is an out-of-band line to drop into the transcript (e.g. an
+// update-available note from the daily check).
+type noticeMsg string
 
 // entryKind classifies a transcript line for styling.
 type entryKind int
@@ -99,6 +104,7 @@ type Model struct {
 
 	approvals chan approval.Request
 	deltas    chan string
+	notices   chan string
 	results   chan runResult
 	cancel    context.CancelFunc // cancels the in-flight agent turn
 
@@ -132,6 +138,7 @@ func New(cfg Config) Model {
 		sp:        sp,
 		approvals: cfg.Approvals,
 		deltas:    cfg.Deltas,
+		notices:   cfg.Notices,
 		results:   make(chan runResult, 1),
 		goalCh:    make(chan goalStepMsg, 4),
 	}
@@ -146,6 +153,9 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{textarea.Blink, waitForApproval(m.approvals)}
 	if m.deltas != nil {
 		cmds = append(cmds, waitForDelta(m.deltas))
+	}
+	if m.notices != nil {
+		cmds = append(cmds, waitForNotice(m.notices))
 	}
 	return tea.Batch(cmds...)
 }
@@ -288,6 +298,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setContent(atBottom)
 		}
 		return m, waitForDelta(m.deltas)
+
+	case noticeMsg:
+		m.add(kindInfo, string(msg))
+		return m, waitForNotice(m.notices)
 
 	case goalStepMsg:
 		// A new goal iteration is about to run: commit the previous one's text.
@@ -586,6 +600,10 @@ func waitForResult(ch chan runResult) tea.Cmd {
 
 func waitForDelta(ch chan string) tea.Cmd {
 	return func() tea.Msg { return deltaMsg(<-ch) }
+}
+
+func waitForNotice(ch chan string) tea.Cmd {
+	return func() tea.Msg { return noticeMsg(<-ch) }
 }
 
 func waitForGoal(ch chan goalStepMsg) tea.Cmd {

@@ -14,6 +14,7 @@
 //	ARNES_STREAM        off to disable live token streaming in the TUI
 //	ARNES_THEME         path to a theme JSON file (default ~/.arnes/theme.json)
 //	ARNES_CONFIG        path to the settings file (default ~/.arnes/config.json)
+//	ARNES_AUTO_UPDATE  on to let the daily check install a newer release itself
 //	ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / MOONSHOT_API_KEY / OPENAI_API_KEY
 //
 // Provider, model and API keys can also live in the config file and be set at
@@ -47,6 +48,7 @@ import (
 	"github.com/MauricioJC3/arnes_ng/internal/subagent"
 	"github.com/MauricioJC3/arnes_ng/internal/tool"
 	"github.com/MauricioJC3/arnes_ng/internal/tui"
+	"github.com/MauricioJC3/arnes_ng/internal/update"
 )
 
 const systemPrompt = `Sos un agente de programación que corre en la terminal del usuario, dentro de un arnés.
@@ -89,6 +91,9 @@ final salvo que se pidan. Respondé en el idioma del usuario.`
 
 // version is set at build time via -ldflags "-X main.version=...".
 var version = "dev"
+
+// repo is the GitHub "owner/name" the self-updater pulls releases from.
+const repo = "MauricioJC3/arnes_ng"
 
 func main() {
 	for _, a := range os.Args[1:] {
@@ -152,6 +157,11 @@ func run() error {
 
 	uiMode := strings.ToLower(cmp.Or(os.Getenv("ARNES_UI"), "tui"))
 	streaming := uiMode == "tui" && !isFalsey(os.Getenv("ARNES_STREAM"))
+
+	// A once-a-day background check for a newer release. It never blocks startup;
+	// the result (if any) is surfaced on notices.
+	notices := make(chan string, 1)
+	go checkForUpdate(cfg.AutoUpdate || isTruthy(os.Getenv("ARNES_AUTO_UPDATE")), notices)
 
 	var approver approval.Approver
 	var approvals chan approval.Request
@@ -258,12 +268,18 @@ func run() error {
 			},
 			Approvals: approvals,
 			Deltas:    deltas,
+			Notices:   notices,
 			Theme:     theme,
 			Greeting:  summary,
 		})
 	}
 
 	fmt.Println(summary)
+	go func() {
+		if msg := <-notices; msg != "" {
+			fmt.Fprintln(os.Stdout, "\narnés:", msg)
+		}
+	}()
 	return repl.New(a, prov, stdin, os.Stdout).Run(context.Background())
 }
 
@@ -470,6 +486,26 @@ func (a *app) FreshConversation() command.Conversation {
 	return agent.New(a.prov, a.tools, a.effectiveApprover(), opts...)
 }
 
+// SelfUpdate implements command.Updater: check GitHub for a newer release and,
+// if there is one, replace this binary with it. It blocks while downloading.
+func (a *app) SelfUpdate(ctx context.Context) (string, error) {
+	rel, newer, err := update.Check(ctx, update.GitHub{Repo: repo}, version)
+	if err != nil {
+		return "", err
+	}
+	if !newer {
+		return "arnes " + version + " ya está al día", nil
+	}
+	self, err := update.SelfPath()
+	if err != nil {
+		return "", err
+	}
+	if err := update.Apply(ctx, rel, self); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("actualizado %s → %s · reiniciá arnes para usar la nueva versión", version, rel.Version), nil
+}
+
 // Run implements repl.Conversation. It delegates to the live conversation and
 // keeps the session's cumulative token usage in sync with the agent.
 func (a *app) Run(ctx context.Context, in string) (string, error) {
@@ -665,6 +701,58 @@ func isFalsey(s string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// isTruthy reports whether s is an explicit "on" value.
+func isTruthy(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "true", "on", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+// checkForUpdate runs a throttled (once/day) check for a newer arnes release.
+// When one exists it reports on notices; with auto on, it installs the release
+// in place first and reports that instead. Any error is swallowed -- a failed
+// check must never get in the way of starting up.
+func checkForUpdate(auto bool, notices chan<- string) {
+	stampPath, err := update.DefaultStampPath()
+	if err != nil {
+		return
+	}
+	stamp := update.Stamp{Path: stampPath}
+	if !stamp.Due(time.Now(), 24*time.Hour) {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	rel, newer, err := update.Check(ctx, update.GitHub{Repo: repo}, version)
+	_ = stamp.Mark(time.Now()) // even on error: don't retry until tomorrow
+	if err != nil || !newer {
+		return
+	}
+
+	msg := "hay una versión nueva de arnes (" + rel.Version + ") — usá /update-arnes"
+	if auto {
+		switch self, err := update.SelfPath(); {
+		case err != nil:
+			// fall through with the plain notice
+		default:
+			if err := update.Apply(ctx, rel, self); err == nil {
+				msg = "arnes se actualizó a " + rel.Version + " — reiniciá para usarla"
+			} else {
+				msg = "no pude autoactualizar a " + rel.Version + " (" + err.Error() + ") — probá /update-arnes"
+			}
+		}
+	}
+	select {
+	case notices <- msg:
+	default:
 	}
 }
 

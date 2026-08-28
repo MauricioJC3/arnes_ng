@@ -76,6 +76,12 @@ type FreshFactory interface {
 	FreshConversation() Conversation
 }
 
+// Updater is implemented by a Conversation that can replace the running arnes
+// binary with a newer release (the /update-arnes command).
+type Updater interface {
+	SelfUpdate(ctx context.Context) (string, error)
+}
+
 // Spec describes one slash command, for /help and for the TUI autocomplete.
 type Spec struct {
 	Name  string // "/connect"
@@ -97,6 +103,7 @@ func Commands() []Spec {
 		{"/new", "", "empieza una sesión nueva"},
 		{"/compact", "[estrategia]", "compacta el contexto (none|sliding|summarize)"},
 		{"/subagents", "", "lista los subagentes disponibles"},
+		{"/update-arnes", "", "busca e instala una versión nueva de arnes"},
 		{"/exit", "", "salir"},
 	}
 }
@@ -236,6 +243,17 @@ func Dispatch(line string, conv Conversation, prov provider.Provider) (Result, e
 			return Result{Output: "no hay subagentes configurados"}, nil
 		}
 		return Result{Output: "  " + strings.Join(lines, "\n  ")}, nil
+
+	case "/update-arnes", "/update":
+		up, ok := conv.(Updater)
+		if !ok {
+			return Result{}, errors.New("este arnés no se puede autoactualizar")
+		}
+		out, err := up.SelfUpdate(context.Background())
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Output: out}, nil
 
 	case "/exit", "/quit":
 		return Result{Exit: true}, nil

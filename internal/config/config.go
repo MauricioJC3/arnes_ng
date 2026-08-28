@@ -12,9 +12,10 @@ import (
 
 // Config is the on-disk settings shape.
 type Config struct {
-	Provider string            `json:"provider,omitempty"`
-	Model    string            `json:"model,omitempty"`
-	Keys     map[string]string `json:"keys,omitempty"` // provider name -> api key
+	Provider   string            `json:"provider,omitempty"`
+	Model      string            `json:"model,omitempty"`
+	Keys       map[string]string `json:"keys,omitempty"` // provider name -> api key
+	AutoUpdate bool              `json:"auto_update,omitempty"`
 }
 
 // DefaultPath is ~/.arnes/config.json.

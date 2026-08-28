@@ -70,6 +70,17 @@ go install github.com/MauricioJC3/arnes_ng/cmd/arnes@latest
 
 Desde el fuente: `make install` (usa `go install`) o `make build` (deja `./arnes`).
 
+## Actualización
+
+- **`/update-arnes`** — busca el último release, y si hay uno más nuevo baja el
+  binario de tu plataforma, verifica su SHA-256 y reemplaza el ejecutable en el
+  lugar. Después reiniciás arnes.
+- **Chequeo diario** — al arrancar, una vez por día, arnes mira si hay una
+  versión nueva (sin bloquear el arranque) y te avisa en la conversación. Con
+  `auto_update: true` en `~/.arnes/config.json` (o `ARNES_AUTO_UPDATE=on`) el
+  chequeo instala la versión nueva solo y te avisa que lo hizo. Por defecto solo
+  notifica: reemplazar el binario en caliente sin tu OK es más riesgoso.
+
 ## Uso
 
 ```bash
@@ -97,13 +108,15 @@ Las variables ganan sobre el archivo de config.
 | `ARNES_COMPACT_AT` | umbral de tokens para auto-compactar (default 120000) |
 | `ARNES_RESUME` | id (o prefijo) de sesión a reanudar al arrancar |
 | `ARNES_RULES` | ruta a un archivo de reglas del proyecto (default: `AGENTS.md` en el cwd) |
+| `ARNES_AUTO_UPDATE` | `on` para que el chequeo diario instale la versión nueva por su cuenta |
 | `ARNES_CONFIG` / `ARNES_THEME` / `ARNES_MCP` / `ARNES_SUBAGENTS` | rutas alternativas |
 | `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY` / `MOONSHOT_API_KEY` / `OPENAI_API_KEY` | API keys por entorno |
 
 ### Comandos (slash)
 
 `/help` `/connect` `/mode` `/cost` `/model` `/sessions` `/resume` `/new`
-`/compact` `/subagents` `/exit`. Escribí `/` en la TUI para el autocompletado.
+`/compact` `/subagents` `/update-arnes` `/exit`. Escribí `/` en la TUI para el
+autocompletado.
 
 ### Teclas (TUI)
 
@@ -126,6 +139,7 @@ Las variables ganan sobre el archivo de config.
 | `internal/subagent` | definiciones de subagentes + `DelegateTool` |
 | `internal/mcp` | cliente MCP stdio (JSON-RPC 2.0) |
 | `internal/command` | dispatcher de slash commands (compartido TUI / REPL) |
+| `internal/update` | autoactualización: chequeo de releases en GitHub + reemplazo del binario |
 | `internal/tui` | front-end Bubble Tea |
 | `internal/repl` | front-end de línea (fallback) |
 
