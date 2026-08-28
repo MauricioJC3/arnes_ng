@@ -1,0 +1,55 @@
+package tui
+
+import (
+	"os"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/andresmjimenez/arnes/internal/approval"
+	"github.com/andresmjimenez/arnes/internal/command"
+	"github.com/andresmjimenez/arnes/internal/provider"
+)
+
+// Options bundles everything Run needs.
+type Options struct {
+	Conv      command.Conversation
+	Provider  provider.Provider
+	SessionID func() string
+	Stats     func() int
+	Approvals chan approval.Request
+	Deltas    chan string
+	Theme     Theme
+	Greeting  string
+}
+
+// Run starts the full-screen program and blocks until the user quits.
+func Run(o Options) error {
+	m := New(Config{
+		Conv:      o.Conv,
+		Provider:  o.Provider,
+		SessionID: o.SessionID,
+		Stats:     o.Stats,
+		Approvals: o.Approvals,
+		Deltas:    o.Deltas,
+		Theme:     o.Theme,
+		Greeting:  o.Greeting,
+	})
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	if mouseEnabled() {
+		// Capturing the mouse enables wheel scroll but disables the terminal's
+		// own text selection, so it is opt-in.
+		opts = append(opts, tea.WithMouseCellMotion())
+	}
+	_, err := tea.NewProgram(m, opts...).Run()
+	return err
+}
+
+func mouseEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ARNES_MOUSE"))) {
+	case "1", "on", "true", "yes":
+		return true
+	default:
+		return false
+	}
+}

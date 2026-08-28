@@ -1,0 +1,241 @@
+// Package command dispatches slash commands. Both front-ends (the plain REPL and
+// the TUI) call Dispatch so the command set stays identical.
+package command
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/andresmjimenez/arnes/internal/provider"
+	"github.com/andresmjimenez/arnes/internal/session"
+)
+
+// Conversation is one user turn in, final text out.
+type Conversation interface {
+	Run(ctx context.Context, userInput string) (string, error)
+}
+
+// Sessions is implemented by a Conversation that manages session lifecycle.
+type Sessions interface {
+	ListSessions() ([]session.Meta, error)
+	ResumeSession(id string) (string, error)
+	NewSession() (string, error)
+}
+
+// Compaction is implemented by a Conversation that can compact its context.
+type Compaction interface {
+	SetStrategy(name string) (string, error)
+	Compact() (string, error)
+}
+
+// Subagents is implemented by a Conversation that exposes delegation targets.
+type Subagents interface {
+	ListSubagents() []string
+}
+
+// Connector is implemented by a Conversation that can switch provider/model and
+// persist the choice (the /connect command).
+type Connector interface {
+	Connect(providerName, model, apiKey string) (string, error)
+}
+
+// Modes is implemented by a Conversation with switchable permission modes
+// (normal / auto / plan) -- the /mode command and the TUI's shift+tab.
+type Modes interface {
+	Mode() string
+	SetMode(name string) (string, error)
+}
+
+// Result is the outcome of a slash command: text to show, and whether to quit.
+type Result struct {
+	Output string
+	Exit   bool
+}
+
+// Spec describes one slash command, for /help and for the TUI autocomplete.
+type Spec struct {
+	Name  string // "/connect"
+	Args  string // "<prov> [modelo] [key]"
+	Short string // one-line description
+}
+
+// Commands returns every slash command, in display order.
+func Commands() []Spec {
+	return []Spec{
+		{"/help", "", "esta ayuda"},
+		{"/connect", "[prov] [modelo] [key]", "cambia de proveedor y lo deja guardado"},
+		{"/mode", "[normal|auto|plan]", "cambia el modo de permisos"},
+		{"/model", "[nombre]", "muestra o cambia el modelo"},
+		{"/sessions", "", "lista las sesiones guardadas"},
+		{"/resume", "<id>", "reanuda una sesión (acepta prefijo)"},
+		{"/new", "", "empieza una sesión nueva"},
+		{"/compact", "[estrategia]", "compacta el contexto (none|sliding|summarize)"},
+		{"/subagents", "", "lista los subagentes disponibles"},
+		{"/exit", "", "salir"},
+	}
+}
+
+// Help is the text shown by /help, derived from Commands.
+var Help = helpText()
+
+func helpText() string {
+	var b strings.Builder
+	b.WriteString("comandos:\n")
+	for _, c := range Commands() {
+		left := c.Name
+		if c.Args != "" {
+			left += " " + c.Args
+		}
+		fmt.Fprintf(&b, "  %-30s %s\n", left, c.Short)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// Dispatch handles one slash-command line. conv is the active conversation (it
+// may also implement Sessions / Compaction / Subagents); prov backs /model.
+func Dispatch(line string, conv Conversation, prov provider.Provider) (Result, error) {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return Result{}, nil
+	}
+
+	switch fields[0] {
+	case "/help":
+		return Result{Output: Help}, nil
+
+	case "/connect":
+		conn, ok := conv.(Connector)
+		if !ok {
+			return Result{}, errors.New("este arnés no soporta /connect")
+		}
+		if len(fields) < 2 {
+			return Result{}, errors.New("uso: /connect <provider> [modelo] [api-key]  (provider: anthropic|deepseek|kimi|openai)")
+		}
+		model, key := "", ""
+		if len(fields) >= 3 {
+			model = fields[2]
+		}
+		if len(fields) >= 4 {
+			key = fields[3]
+		}
+		msg, err := conn.Connect(fields[1], model, key)
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Output: msg}, nil
+
+	case "/mode":
+		md, ok := conv.(Modes)
+		if !ok {
+			return Result{}, errors.New("este arnés no soporta modos")
+		}
+		if len(fields) < 2 {
+			return Result{Output: "modo actual: " + md.Mode() + "  (normal | auto | plan)"}, nil
+		}
+		msg, err := md.SetMode(fields[1])
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Output: msg}, nil
+
+	case "/model":
+		if len(fields) < 2 {
+			return Result{Output: "modelo actual: " + prov.Model()}, nil
+		}
+		prov.SetModel(fields[1])
+		return Result{Output: "modelo: " + prov.Model()}, nil
+
+	case "/sessions", "/ls":
+		return listSessions(conv)
+
+	case "/resume":
+		if len(fields) < 2 {
+			return Result{}, errors.New("uso: /resume <id>")
+		}
+		return sessionCmd(conv, func(s Sessions) (string, error) { return s.ResumeSession(fields[1]) })
+
+	case "/new":
+		return sessionCmd(conv, func(s Sessions) (string, error) { return s.NewSession() })
+
+	case "/compact":
+		return compactCmd(conv, fields)
+
+	case "/subagents":
+		sa, ok := conv.(Subagents)
+		if !ok {
+			return Result{}, errors.New("este arnés no tiene subagentes")
+		}
+		lines := sa.ListSubagents()
+		if len(lines) == 0 {
+			return Result{Output: "no hay subagentes configurados"}, nil
+		}
+		return Result{Output: "  " + strings.Join(lines, "\n  ")}, nil
+
+	case "/exit", "/quit":
+		return Result{Exit: true}, nil
+
+	default:
+		return Result{}, fmt.Errorf("comando desconocido: %s (probá /help)", fields[0])
+	}
+}
+
+func sessionCmd(conv Conversation, fn func(Sessions) (string, error)) (Result, error) {
+	sc, ok := conv.(Sessions)
+	if !ok {
+		return Result{}, errors.New("este arnés no tiene gestión de sesiones")
+	}
+	msg, err := fn(sc)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Output: msg}, nil
+}
+
+func compactCmd(conv Conversation, fields []string) (Result, error) {
+	c, ok := conv.(Compaction)
+	if !ok {
+		return Result{}, errors.New("este arnés no tiene compactación de contexto")
+	}
+	var out []string
+	if len(fields) >= 2 {
+		msg, err := c.SetStrategy(fields[1])
+		if err != nil {
+			return Result{}, err
+		}
+		out = append(out, msg)
+	}
+	msg, err := c.Compact()
+	if err != nil {
+		return Result{}, err
+	}
+	out = append(out, msg)
+	return Result{Output: strings.Join(out, "\n")}, nil
+}
+
+func listSessions(conv Conversation) (Result, error) {
+	sc, ok := conv.(Sessions)
+	if !ok {
+		return Result{}, errors.New("este arnés no tiene gestión de sesiones")
+	}
+	metas, err := sc.ListSessions()
+	if err != nil {
+		return Result{}, err
+	}
+	if len(metas) == 0 {
+		return Result{Output: "no hay sesiones guardadas"}, nil
+	}
+	var b strings.Builder
+	for i, m := range metas {
+		title := m.Title
+		if title == "" {
+			title = "(sin título)"
+		}
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		fmt.Fprintf(&b, "  %s  %2d msg  %s", m.ID, m.Messages, title)
+	}
+	return Result{Output: b.String()}, nil
+}

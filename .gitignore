@@ -1,0 +1,24 @@
+# Compiled binary
+/arnes
+*.exe
+
+# Go build / test artifacts
+*.test
+*.out
+/dist/
+/vendor/
+
+# Local harness data (lives in ~/.arnes, but never commit it if it lands here)
+.arnes/
+config.json
+theme.json
+mcp.json
+subagents.json
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
