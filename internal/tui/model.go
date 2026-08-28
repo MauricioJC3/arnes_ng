@@ -10,9 +10,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
 
 	"github.com/MauricioJC3/arnes_ng/internal/approval"
 	"github.com/MauricioJC3/arnes_ng/internal/command"
@@ -68,22 +66,6 @@ type noticeMsg string
 // todosMsg is the new state of the task checklist.
 type todosMsg []todo.Item
 
-// entryKind classifies a transcript line for styling.
-type entryKind int
-
-const (
-	kindUser entryKind = iota
-	kindAssistant
-	kindInfo
-	kindError
-)
-
-type entry struct {
-	kind     entryKind
-	text     string
-	rendered string // cached display form (e.g. glamour markdown for assistant)
-}
-
 // uiState is the single top-level mode of the UI. It is derived from the model
 // fields by state(); Update and View both switch on it so their branch order
 // can never drift apart.
@@ -124,15 +106,13 @@ type Model struct {
 	theme     Theme
 	styles    Styles
 
-	vp viewport.Model
+	transcript // scrollback: entries, in-flight text, viewport, markdown renderer
+
 	ta textarea.Model
 	sp spinner.Model
 
 	width, height int
-	ready         bool
 
-	entries    []entry
-	live       string // streamed text for the current turn, not yet committed
 	busy       bool
 	pending    *approval.Request
 	menu       commandMenu
@@ -140,9 +120,8 @@ type Model struct {
 	model      *modelForm
 	listModels ListModelsFunc
 	quitting   bool
-	quitHint   bool   // first Esc arms the "Esc again to quit" prompt
-	mouseOn    bool   // mouse capture state; Ctrl+O toggles it (off = terminal text selection)
-	mdStyle    string // glamour style name for rendered markdown
+	quitHint   bool // first Esc arms the "Esc again to quit" prompt
+	mouseOn    bool // mouse capture state; Ctrl+O toggles it (off = terminal text selection)
 
 	history []string // submitted inputs, for ↑/↓ recall
 	histAt  int      // index into history; len(history) == showing the draft
@@ -158,9 +137,6 @@ type Model struct {
 	todoItems []todo.Item // current checklist; rendered as a panel above the input
 	results   chan runResult
 	cancel    context.CancelFunc // cancels the in-flight agent turn
-
-	md      *glamour.TermRenderer
-	mdWidth int
 }
 
 // New builds the model. It does not start the program (see Run).
@@ -191,6 +167,7 @@ func New(cfg Config) Model {
 		cost:       cfg.Cost,
 		theme:      cfg.Theme,
 		styles:     styles,
+		transcript: transcript{styles: styles, mdStyle: cfg.MarkdownStyle},
 		ta:         ta,
 		sp:         sp,
 		approvals:  cfg.Approvals,
@@ -198,7 +175,6 @@ func New(cfg Config) Model {
 		notices:    cfg.Notices,
 		todos:      cfg.Todos,
 		mouseOn:    cfg.MouseOn,
-		mdStyle:    cfg.MarkdownStyle,
 		listModels: cfg.ListModels,
 		results:    make(chan runResult, 1),
 		goalCh:     make(chan goalStepMsg, 4),
@@ -232,13 +208,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.relayout()
-		m.md = nil // force a renderer at the new width
-		for i := range m.entries {
-			if m.entries[i].kind == kindAssistant {
-				m.entries[i].rendered = m.markdown(m.entries[i].text)
-			}
-		}
-		m.setContent(m.vp.AtBottom())
+		m.transcript.reflow() // re-render assistant markdown at the new width
 		return m, nil
 
 	case tea.MouseMsg:
@@ -403,9 +373,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// turn already finished (the delta/result channels race) is drained and
 		// dropped, so it can't leak into the next message.
 		if m.busy {
-			atBottom := !m.ready || m.vp.AtBottom()
-			m.live += string(msg)
-			m.setContent(atBottom)
+			m.transcript.appendDelta(string(msg))
 		}
 		return m, waitForDelta(m.deltas)
 
@@ -460,11 +428,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.commitLive()
 			m.add(kindInfo, "⨯ turno interrumpido")
 		case msg.err != nil:
-			m.live = ""
+			m.transcript.dropLive()
 			m.add(kindError, msg.err.Error())
 		default:
 			// The result text is authoritative; drop the partial live buffer.
-			m.live = ""
+			m.transcript.dropLive()
 			if strings.TrimSpace(msg.text) != "" {
 				m.add(kindAssistant, msg.text)
 			}
@@ -722,56 +690,6 @@ func (m Model) answerApproval(msg tea.KeyMsg) Model {
 	return m
 }
 
-// add appends an entry. The scroll position is kept unless the viewport was
-// already at the bottom (so reading history isn't interrupted); a user message
-// always jumps to the bottom.
-func (m *Model) add(k entryKind, text string) {
-	e := entry{kind: k, text: text}
-	if k == kindAssistant {
-		e.rendered = m.markdown(text)
-	}
-	atBottom := !m.ready || m.vp.AtBottom() || k == kindUser
-	m.entries = append(m.entries, e)
-	m.setContent(atBottom)
-}
-
-// commitLive moves the streamed text of this turn into a permanent entry.
-func (m *Model) commitLive() {
-	if m.live == "" {
-		return
-	}
-	m.add(kindAssistant, m.live)
-	m.live = ""
-}
-
-// markdown renders s through glamour, caching the renderer per width. On any
-// error it returns the raw text.
-func (m *Model) markdown(s string) string {
-	w := m.vp.Width - 2
-	if w < 20 {
-		w = 20
-	}
-	if m.md == nil || m.mdWidth != w {
-		style := m.mdStyle
-		if style == "" || style == "auto" {
-			// "auto" queries the terminal background over stdin, which races
-			// bubbletea for the event loop and leaks the OSC 11 reply into the
-			// input. Pick an explicit style instead.
-			style = "dark"
-		}
-		r, err := glamour.NewTermRenderer(glamour.WithStandardStyle(style), glamour.WithWordWrap(w))
-		if err != nil {
-			return s
-		}
-		m.md, m.mdWidth = r, w
-	}
-	out, err := m.md.Render(s)
-	if err != nil {
-		return s
-	}
-	return strings.Trim(out, "\n")
-}
-
 // cycleMode rotates normal -> auto -> plan -> normal when the conversation
 // supports modes (shift+tab).
 func (m Model) cycleMode() Model {
@@ -787,18 +705,6 @@ func (m Model) cycleMode() Model {
 		m.add(kindInfo, out)
 	}
 	return m
-}
-
-// setContent re-renders the viewport, scrolling to the bottom only when asked
-// (so a user reading history isn't yanked down by streaming).
-func (m *Model) setContent(gotoBottom bool) {
-	if !m.ready {
-		return
-	}
-	m.vp.SetContent(m.renderTranscript())
-	if gotoBottom {
-		m.vp.GotoBottom()
-	}
 }
 
 // waitFor* are tea.Cmds that block on a channel.

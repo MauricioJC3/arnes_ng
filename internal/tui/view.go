@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/MauricioJC3/arnes_ng/internal/command"
@@ -44,54 +43,8 @@ func (m *Model) relayout() {
 	if vpHeight < 3 {
 		vpHeight = 3
 	}
-	if !m.ready {
-		m.vp = viewport.New(m.width, vpHeight)
-		m.ready = true
-	} else {
-		m.vp.Width = m.width
-		m.vp.Height = vpHeight
-	}
+	m.transcript.resize(m.width, vpHeight)
 	m.ta.SetWidth(m.width - 2)
-	m.vp.SetContent(m.renderTranscript())
-	m.vp.GotoBottom()
-}
-
-// renderTranscript styles every entry (plus any in-flight streamed text). Each
-// entry is wrapped to the viewport width individually -- assistant entries are
-// already wrapped by glamour, so they are left as-is.
-func (m Model) renderTranscript() string {
-	w := m.vp.Width
-	if w <= 0 {
-		w = m.width
-	}
-	if w <= 0 {
-		w = 80
-	}
-
-	lines := make([]string, 0, len(m.entries)+1)
-	for _, e := range m.entries {
-		lines = append(lines, m.renderEntry(e, w))
-	}
-	if m.live != "" {
-		lines = append(lines, wrapTo(m.styles.Assistant.Render(m.live), w))
-	}
-	return strings.Join(lines, "\n\n")
-}
-
-func (m Model) renderEntry(e entry, w int) string {
-	switch e.kind {
-	case kindUser:
-		return wrapTo(m.styles.Accent.Render("▌")+" "+m.styles.User.Render(e.text), w)
-	case kindAssistant:
-		if e.rendered != "" {
-			return e.rendered // glamour output, already wrapped
-		}
-		return wrapTo(m.styles.Assistant.Render(e.text), w)
-	case kindError:
-		return wrapTo(m.styles.Error.Render("✗ "+e.text), w)
-	default: // kindInfo
-		return wrapTo(m.styles.Muted.Render(e.text), w)
-	}
 }
 
 func wrapTo(s string, w int) string {
