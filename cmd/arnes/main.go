@@ -38,6 +38,7 @@ import (
 
 	"github.com/MauricioJC3/arnes_ng/internal/agent"
 	"github.com/MauricioJC3/arnes_ng/internal/approval"
+	"github.com/MauricioJC3/arnes_ng/internal/checkpoint"
 	"github.com/MauricioJC3/arnes_ng/internal/command"
 	"github.com/MauricioJC3/arnes_ng/internal/compact"
 	"github.com/MauricioJC3/arnes_ng/internal/config"
@@ -216,6 +217,7 @@ func run() error {
 		compactAt:     compactAt,
 		streaming:     streaming,
 		deltas:        deltas,
+		checkpoints:   checkpoint.NewStore(),
 	}
 
 	subDefs, err := loadSubagents()
@@ -397,8 +399,9 @@ type app struct {
 	compactAt     int
 	streaming     bool
 	deltas        chan string
-	hooks         agent.Hooks // pre/post tool-call hooks; nil when none configured
-	rules         string      // project rules, already wrapped for the system prompt
+	hooks         agent.Hooks       // pre/post tool-call hooks; nil when none configured
+	checkpoints   *checkpoint.Store // per-turn restore points for /rewind
+	rules         string            // project rules, already wrapped for the system prompt
 
 	sess            *session.Session
 	ag              *agent.Agent
@@ -552,6 +555,9 @@ func (a *app) rebuild(sess *session.Session, history []provider.Message) {
 	if a.hooks != nil {
 		opts = append(opts, agent.WithHooks(a.hooks))
 	}
+	if a.checkpoints != nil {
+		opts = append(opts, agent.WithToolObserver(a.checkpoints.Observe))
+	}
 	if a.streaming {
 		opts = append(opts, agent.WithStreaming(true))
 		if a.deltas != nil {
@@ -577,6 +583,9 @@ func (a *app) FreshConversation() command.Conversation {
 	}
 	if a.hooks != nil {
 		opts = append(opts, agent.WithHooks(a.hooks))
+	}
+	if a.checkpoints != nil {
+		opts = append(opts, agent.WithToolObserver(a.checkpoints.Observe))
 	}
 	if a.streaming {
 		opts = append(opts, agent.WithStreaming(true))
@@ -607,12 +616,40 @@ func (a *app) SelfUpdate(ctx context.Context) (string, error) {
 	return fmt.Sprintf("actualizado %s → %s · reiniciá arnes para usar la nueva versión", version, rel.Version), nil
 }
 
-// Run implements repl.Conversation. It delegates to the live conversation and
-// keeps the session's cumulative token usage in sync with the agent.
+// Run implements repl.Conversation. It snapshots a restore point, delegates to
+// the live conversation, and keeps the session's cumulative token usage in sync
+// with the agent.
 func (a *app) Run(ctx context.Context, in string) (string, error) {
+	if a.checkpoints != nil {
+		a.checkpoints.Begin(a.ag.History(), in)
+	}
 	out, err := a.conv.Run(ctx, in)
 	a.usedIn, a.usedOut = a.ag.Usage()
 	return out, err
+}
+
+// ListCheckpoints implements command.Rewinder.
+func (a *app) ListCheckpoints() string { return a.checkpoints.Summary() }
+
+// Rewind implements command.Rewinder: restore the files captured since
+// checkpoint n and rebuild the agent from that checkpoint's history.
+func (a *app) Rewind(n int) (string, error) {
+	cp, err := a.checkpoints.Rewind(n)
+	if cp == nil {
+		return "", err
+	}
+	hist := cp.History()
+	a.sess.Messages = hist
+	a.rebuild(a.sess, hist)
+	if saveErr := a.store.Save(a.sess); saveErr != nil {
+		return "", fmt.Errorf("rewind aplicado, pero no se pudo guardar la sesión: %w", saveErr)
+	}
+	msg := fmt.Sprintf("rewind al checkpoint %d · %d archivo(s) restaurado(s) · historial en %d mensajes",
+		n, cp.Files(), len(hist))
+	if err != nil {
+		return msg, err // partial: some files failed to restore
+	}
+	return msg, nil
 }
 
 // SessionUsage returns the cumulative token usage since this session started.

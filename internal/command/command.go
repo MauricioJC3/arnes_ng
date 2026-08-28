@@ -91,6 +91,13 @@ type Updater interface {
 	SelfUpdate(ctx context.Context) (string, error)
 }
 
+// Rewinder is implemented by a Conversation that keeps per-turn restore points
+// (the /rewind command).
+type Rewinder interface {
+	ListCheckpoints() string
+	Rewind(n int) (string, error)
+}
+
 // Spec describes one slash command, for /help and for the TUI autocomplete.
 type Spec struct {
 	Name  string // "/connect"
@@ -111,6 +118,7 @@ func Commands() []Spec {
 		{"/resume", "<id>", "reanuda una sesión (acepta prefijo)"},
 		{"/new", "", "empieza una sesión nueva"},
 		{"/compact", "[estrategia]", "compacta el contexto (none|sliding|summarize)"},
+		{"/rewind", "[n]", "lista los checkpoints o vuelve al checkpoint n (historial + archivos)"},
 		{"/subagents", "", "lista los subagentes disponibles"},
 		{"/update-arnes", "", "busca e instala una versión nueva de arnes"},
 		{"/exit", "", "salir"},
@@ -252,6 +260,27 @@ func Dispatch(line string, conv Conversation, prov provider.Provider) (Result, e
 
 	case "/compact":
 		return compactCmd(conv, fields)
+
+	case "/rewind":
+		rw, ok := conv.(Rewinder)
+		if !ok {
+			return Result{}, errors.New("este arnés no tiene checkpoints")
+		}
+		if len(fields) < 2 {
+			return Result{Output: rw.ListCheckpoints()}, nil
+		}
+		n, err := strconv.Atoi(fields[1])
+		if err != nil || n < 1 {
+			return Result{}, fmt.Errorf("uso: /rewind [n]  (n es un número de checkpoint; sin n lista)")
+		}
+		out, err := rw.Rewind(n)
+		if err != nil {
+			if out != "" {
+				return Result{Output: out}, err // partial success
+			}
+			return Result{}, err
+		}
+		return Result{Output: out}, nil
 
 	case "/subagents":
 		sa, ok := conv.(Subagents)

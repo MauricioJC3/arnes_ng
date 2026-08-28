@@ -33,6 +33,11 @@ que lo envuelve.
   la sesión (`$0.0421`); `/cost` lista el gasto por sesión, con total. El uso se
   persiste, así que `/resume` continúa el conteo.
 - **Sesiones persistentes**: cada turno se guarda; se reanudan por id o prefijo.
+- **Checkpoints / rewind**: antes de cada turno se toma un punto de restauración
+  (historial + contenido previo de los archivos que el turno toque con
+  `write_file` / `edit_file`). `/rewind` lista los checkpoints; `/rewind n` vuelve
+  al checkpoint `n`: reescribe los archivos y recorta el historial. Viven en
+  memoria durante el proceso; los cambios hechos por `bash` no se rastrean.
 - **Compactación de contexto**: `none`, `sliding`, `summarize`, con umbral de tokens.
 - **Subagentes**: delegación a agentes especializados (`research`, `test-writer`),
   sin recursión.
@@ -153,6 +158,7 @@ autocompletado.
 | `internal/mcp` | cliente MCP stdio (JSON-RPC 2.0) |
 | `internal/hook` | hooks pre/post tool call (`hooks.json`) |
 | `internal/todo` | checklist de la tarea actual (store + tool `todo_write`) |
+| `internal/checkpoint` | puntos de restauración por turno para `/rewind` |
 | `internal/command` | dispatcher de slash commands (compartido TUI / REPL) |
 | `internal/update` | autoactualización: chequeo de releases en GitHub + reemplazo del binario |
 | `internal/tui` | front-end Bubble Tea |

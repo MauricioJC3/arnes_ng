@@ -24,9 +24,10 @@ type Agent struct {
 	history   []provider.Message
 
 	compactor        compact.Strategy
-	compactThreshold int         // tokens; 0 disables auto-compaction
-	warn             func(error) // non-fatal notifications
-	hooks            Hooks       // pre/post tool-call hooks; nil disables them
+	compactThreshold int                     // tokens; 0 disables auto-compaction
+	warn             func(error)             // non-fatal notifications
+	hooks            Hooks                   // pre/post tool-call hooks; nil disables them
+	observe          func(provider.ToolCall) // passive pre-execute observer; nil disables it
 
 	stream  bool
 	onDelta func(string) // text deltas when streaming
@@ -77,6 +78,13 @@ func WithWarnFn(f func(error)) Option { return func(a *Agent) { a.warn = f } }
 
 // WithHooks registers pre/post tool-call hooks.
 func WithHooks(h Hooks) Option { return func(a *Agent) { a.hooks = h } }
+
+// WithToolObserver registers fn, called with every approved tool call right
+// before it executes (after any pre-tool hook). It cannot block the call; it is
+// for passive bookkeeping such as checkpoint file snapshots.
+func WithToolObserver(fn func(provider.ToolCall)) Option {
+	return func(a *Agent) { a.observe = fn }
+}
 
 // WithStreaming turns on streaming when the provider implements provider.Streamer.
 func WithStreaming(on bool) Option { return func(a *Agent) { a.stream = on } }
@@ -227,6 +235,10 @@ func (a *Agent) runTool(ctx context.Context, call provider.ToolCall) provider.To
 	if !ok {
 		return provider.ToolResult{CallID: call.ID, IsError: true,
 			Content: fmt.Sprintf("No existe una herramienta llamada %q.", call.Name)}
+	}
+
+	if a.observe != nil {
+		a.observe(call)
 	}
 
 	res := provider.ToolResult{CallID: call.ID}
