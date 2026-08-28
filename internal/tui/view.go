@@ -89,6 +89,8 @@ func (m Model) View() string {
 	switch {
 	case m.connect != nil:
 		foot = m.formBox(m.connect.view(m.styles), m.theme.Accent)
+	case m.model != nil:
+		foot = m.formBox(m.model.view(m.styles), m.theme.Accent)
 	case m.pending != nil:
 		foot = m.approvalBox()
 	case m.busy:
@@ -167,7 +169,7 @@ func (m Model) approvalBox() string {
 }
 
 func (m Model) statusBar() string {
-	seg := []string{m.prov.Model()}
+	seg := []string{m.prov().Model()}
 
 	if md, ok := m.conv.(command.Modes); ok {
 		switch md.Mode() {

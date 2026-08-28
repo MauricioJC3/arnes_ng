@@ -92,6 +92,9 @@ make build      # compila ./arnes  (go run recompila cada vez)
                 # el menú de modelos se trae en vivo del proveedor (endpoint /models);
                 # si falla la red o la key, cae a una lista local. Incluye
                 # "escribir a mano" para ids que todavía no estén en la lista.
+/model          # picker de modelos, agrupado por cada proveedor con key guardada;
+                # el actual queda marcado. Elegir uno de otro proveedor cambia a él.
+                # /model <nombre> lo setea directo.
 ```
 
 La config queda en `~/.arnes/config.json` (permisos `0600`, tiene API keys).

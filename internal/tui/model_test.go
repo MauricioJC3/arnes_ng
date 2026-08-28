@@ -570,15 +570,24 @@ func TestModelKeyDisarmsQuitHint(t *testing.T) {
 	}
 }
 
-// connectFake is a fakeConv that also records a /connect call.
+// connectFake is a fakeConv that also implements Connector + Modeler.
 type connectFake struct {
 	fakeConv
 	gotProvider, gotModel, gotKey string
+	setModel                      string
 }
 
 func (c *connectFake) Connect(provider, model, key string) (string, error) {
 	c.gotProvider, c.gotModel, c.gotKey = provider, model, key
 	return "conectado", nil
+}
+
+func (c *connectFake) ActiveProvider() string   { return "deepseek" }
+func (c *connectFake) Model() string            { return "deepseek-v4-flash" }
+func (c *connectFake) KeyedProviders() []string { return []string{"deepseek"} }
+func (c *connectFake) SetModel(m string) (string, error) {
+	c.setModel = m
+	return "modelo: " + m, nil
 }
 
 func TestModelConnectFlowUsesLiveModels(t *testing.T) {
@@ -639,6 +648,50 @@ func TestModelConnectFlowUsesLiveModels(t *testing.T) {
 	}
 	if conv.gotProvider != "anthropic" || conv.gotModel != "m-one" || conv.gotKey != "sk-abc" {
 		t.Fatalf("Connect recibió %q/%q/%q", conv.gotProvider, conv.gotModel, conv.gotKey)
+	}
+}
+
+func TestModelSlashModelOpensPicker(t *testing.T) {
+	conv := &connectFake{}
+	m := New(Config{
+		Conv:      conv,
+		Provider:  provider.NewMock(),
+		SessionID: func() string { return "s" },
+		Approvals: make(chan approval.Request),
+		Theme:     DefaultTheme(),
+		ListModels: func(_ context.Context, p, _ string) ([]string, error) {
+			return []string{p + "-a", p + "-b"}, nil
+		},
+	})
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = tm.(Model)
+
+	m.ta.SetValue("/model")
+	tm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = tm.(Model)
+	if m.model == nil {
+		t.Fatal("/model no abrió el picker")
+	}
+	if cmd == nil {
+		t.Fatal("debería devolver el Cmd de búsqueda")
+	}
+	msg, ok := cmd().(modelGroupsMsg)
+	if !ok {
+		t.Fatalf("el Cmd devolvió %T, quería modelGroupsMsg", cmd())
+	}
+	tm, _ = m.Update(msg)
+	m = tm.(Model)
+	if m.model.loading || len(m.model.rows) != 3 { // deepseek-a, deepseek-b, manual
+		t.Fatalf("picker no cargó: loading=%v rows=%+v", m.model.loading, m.model.rows)
+	}
+
+	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = tm.(Model)
+	if m.model != nil {
+		t.Fatal("el picker debería cerrarse tras elegir")
+	}
+	if conv.setModel != "deepseek-a" {
+		t.Fatalf("SetModel recibió %q", conv.setModel)
 	}
 }
 

@@ -42,6 +42,15 @@ type Connector interface {
 	Connect(providerName, model, apiKey string) (string, error)
 }
 
+// Modeler is implemented by a Conversation that can report and change the model
+// on the active provider and persist it (the /model command and its picker).
+type Modeler interface {
+	ActiveProvider() string   // name of the provider currently in use
+	Model() string            // its current model id
+	KeyedProviders() []string // providers with a usable key, active one first
+	SetModel(model string) (string, error)
+}
+
 // Modes is implemented by a Conversation with switchable permission modes
 // (normal / auto / plan) -- the /mode command and the TUI's shift+tab.
 type Modes interface {
@@ -212,8 +221,19 @@ func Dispatch(line string, conv Conversation, prov provider.Provider) (Result, e
 		return Result{Output: out}, nil
 
 	case "/model":
+		md, hasModeler := conv.(Modeler)
 		if len(fields) < 2 {
+			if hasModeler {
+				return Result{Output: "modelo actual: " + md.Model() + "  ·  /model <nombre> para cambiar"}, nil
+			}
 			return Result{Output: "modelo actual: " + prov.Model()}, nil
+		}
+		if hasModeler {
+			out, err := md.SetModel(fields[1])
+			if err != nil {
+				return Result{}, err
+			}
+			return Result{Output: out}, nil
 		}
 		prov.SetModel(fields[1])
 		return Result{Output: "modelo: " + prov.Model()}, nil

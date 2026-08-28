@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -258,10 +259,10 @@ func run() error {
 			return err
 		}
 		return tui.Run(tui.Options{
-			Conv:      a,
-			Provider:  a.prov,
-			SessionID: func() string { return a.sess.ID },
-			Stats:     func() int { return compact.EstimateTokens(a.ag.History()) },
+			Conv:       a,
+			ProviderFn: func() provider.Provider { return a.prov },
+			SessionID:  func() string { return a.sess.ID },
+			Stats:      func() int { return compact.EstimateTokens(a.ag.History()) },
 			Cost: func() string {
 				in, out := a.SessionUsage()
 				return costLine(a.prov.Model(), in, out)
@@ -388,6 +389,44 @@ func (a *app) Connect(providerName, model, apiKey string) (string, error) {
 		extra = " · api key guardada"
 	}
 	return fmt.Sprintf("conectado: %s · modelo %s%s\nconfig: %s", name, p.Model(), extra, a.cfgPath), nil
+}
+
+// ActiveProvider implements command.Modeler.
+func (a *app) ActiveProvider() string { return a.providerName }
+
+// Model implements command.Modeler.
+func (a *app) Model() string { return a.prov.Model() }
+
+// KeyedProviders implements command.Modeler: the active provider first, then any
+// other provider that has an API key configured (file or environment).
+func (a *app) KeyedProviders() []string {
+	merged := mergeEnvKeys(a.cfg)
+	var rest []string
+	for name := range providerKeyEnv {
+		if name == a.providerName {
+			continue
+		}
+		if strings.TrimSpace(merged.Keys[name]) != "" {
+			rest = append(rest, name)
+		}
+	}
+	sort.Strings(rest)
+	return append([]string{a.providerName}, rest...)
+}
+
+// SetModel implements command.Modeler: change the model on the active provider
+// and persist it to the config file.
+func (a *app) SetModel(model string) (string, error) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return "", errors.New("modelo vacío")
+	}
+	a.prov.SetModel(model)
+	a.cfg.Model = model
+	if err := a.cfg.Save(a.cfgPath); err != nil {
+		return "", fmt.Errorf("modelo cambiado a %s, pero no se pudo guardar en %s: %w", a.prov.Model(), a.cfgPath, err)
+	}
+	return fmt.Sprintf("modelo: %s (%s)", a.prov.Model(), a.providerName), nil
 }
 
 // ListSubagents implements repl.Subagents.

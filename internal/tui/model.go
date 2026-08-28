@@ -22,16 +22,20 @@ import (
 
 // Config is what Model needs from the rest of the harness.
 type Config struct {
-	Conv      command.Conversation
-	Provider  provider.Provider
-	SessionID func() string // read live: it changes with /new and /resume
-	Stats     func() int    // estimated context tokens; nil to hide
-	Cost      func() string // running session cost, e.g. "$0.0421"; nil/"" hides it
-	Approvals chan approval.Request
-	Deltas    chan string // streamed text chunks; nil when streaming is off
-	Notices   chan string // out-of-band lines (e.g. "update available"); nil to disable
-	Theme     Theme
-	Greeting  string
+	Conv command.Conversation
+	// Provider is the static provider; used only when ProviderFn is nil.
+	Provider provider.Provider
+	// ProviderFn returns the live provider. It wins over Provider and must be
+	// used by anything that can change after /connect (status bar, /model).
+	ProviderFn func() provider.Provider
+	SessionID  func() string // read live: it changes with /new and /resume
+	Stats      func() int    // estimated context tokens; nil to hide
+	Cost       func() string // running session cost, e.g. "$0.0421"; nil/"" hides it
+	Approvals  chan approval.Request
+	Deltas     chan string // streamed text chunks; nil when streaming is off
+	Notices    chan string // out-of-band lines (e.g. "update available"); nil to disable
+	Theme      Theme
+	Greeting   string
 	// ListModels fetches a provider's model list for the /connect picker; nil
 	// falls back to the offline list.
 	ListModels ListModelsFunc
@@ -76,7 +80,7 @@ type entry struct {
 // Model is the Bubble Tea model.
 type Model struct {
 	conv      command.Conversation
-	prov      provider.Provider
+	prov      func() provider.Provider // live: survives /connect
 	sessionID func() string
 	stats     func() int
 	cost      func() string
@@ -96,6 +100,7 @@ type Model struct {
 	pending    *approval.Request
 	menu       commandMenu
 	connect    *connectForm
+	model      *modelForm
 	listModels ListModelsFunc
 	quitting   bool
 	quitHint   bool // first Esc arms the "Esc again to quit" prompt
@@ -131,9 +136,15 @@ func New(cfg Config) Model {
 
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(styles.Accent))
 
+	prov := cfg.ProviderFn
+	if prov == nil {
+		p := cfg.Provider
+		prov = func() provider.Provider { return p }
+	}
+
 	m := Model{
 		conv:       cfg.Conv,
-		prov:       cfg.Provider,
+		prov:       prov,
 		sessionID:  cfg.SessionID,
 		stats:      cfg.Stats,
 		cost:       cfg.Cost,
@@ -205,6 +216,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.connect != nil {
 			return m.driveConnectForm(msg)
+		}
+
+		if m.model != nil {
+			return m.driveModelForm(msg)
 		}
 
 		if m.menu.open {
@@ -334,6 +349,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case modelGroupsMsg:
+		if m.model != nil {
+			m.model.setGroups(msg.groups)
+		}
+		return m, nil
+
 	case goalStepMsg:
 		// A new goal iteration is about to run: commit the previous one's text.
 		m.commitLive()
@@ -378,7 +399,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, textarea.Blink
 	}
 
-	if !m.busy && m.pending == nil && m.connect == nil {
+	if !m.busy && m.pending == nil && m.connect == nil && m.model == nil {
 		var c tea.Cmd
 		m.ta, c = m.ta.Update(msg)
 		cmds = append(cmds, c)
@@ -462,6 +483,43 @@ func (m Model) driveConnectForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// driveModelForm feeds one key to the /model picker and applies the pick: a
+// same-provider model change, or a switch to a model on another keyed provider.
+func (m Model) driveModelForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	done, cancelled := m.model.update(msg)
+	switch {
+	case cancelled:
+		m.model = nil
+		m.add(kindInfo, "/model cancelado")
+	case done != nil:
+		active := m.model.active
+		m.model = nil
+		var out string
+		var err error
+		if done.provider == "" || done.provider == active {
+			md, ok := m.conv.(command.Modeler)
+			if !ok {
+				m.add(kindError, "este arnés no soporta /model")
+				return m, nil
+			}
+			out, err = md.SetModel(done.model)
+		} else {
+			conn, ok := m.conv.(command.Connector)
+			if !ok {
+				m.add(kindError, "este arnés no soporta cambiar de proveedor")
+				return m, nil
+			}
+			out, err = conn.Connect(done.provider, done.model, "")
+		}
+		if err != nil {
+			m.add(kindError, err.Error())
+		} else {
+			m.add(kindInfo, out)
+		}
+	}
+	return m, nil
+}
+
 // submit handles Enter: a slash command runs synchronously; plain text starts an
 // agent turn in a goroutine.
 func (m Model) submit() (tea.Model, tea.Cmd) {
@@ -478,9 +536,18 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// A bare /model opens the picker when the harness can enumerate models;
+	// otherwise it falls through to Dispatch (which just prints the current one).
+	if text == "/model" {
+		if md, ok := m.conv.(command.Modeler); ok && m.listModels != nil {
+			m.model = newModelForm(md.ActiveProvider(), md.Model())
+			return m, fetchModelGroups(m.listModels, md.KeyedProviders())
+		}
+	}
+
 	if strings.HasPrefix(text, "/") {
 		m.add(kindInfo, "» "+redactConnect(text))
-		res, err := command.Dispatch(text, m.conv, m.prov)
+		res, err := command.Dispatch(text, m.conv, m.prov())
 		switch {
 		case err != nil:
 			m.add(kindError, err.Error())
@@ -545,6 +612,9 @@ func (m Model) cancelWithCtrlC() (tea.Model, tea.Cmd) {
 	case m.connect != nil:
 		m.connect = nil
 		m.add(kindInfo, "/connect cancelado")
+	case m.model != nil:
+		m.model = nil
+		m.add(kindInfo, "/model cancelado")
 	case m.pending != nil:
 		return m.answerApproval(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}), nil
 	case m.menu.open:

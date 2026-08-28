@@ -20,24 +20,44 @@ type fakeApp struct {
 	connected [3]string
 	mode      string
 	updated   int
+	curModel  string
 }
 
 func (*fakeApp) Run(context.Context, string) (string, error) { return "", nil }
 func (f *fakeApp) ListSessions() ([]session.Meta, error)     { return f.metas, nil }
-func (f *fakeApp) ResumeSession(id string) (string, error)   { f.resumed = id; return "reanudada " + id, nil }
-func (f *fakeApp) NewSession() (string, error)               { f.newed++; return "sesión nueva", nil }
-func (f *fakeApp) SetStrategy(n string) (string, error)      { f.strategy = n; return "estrategia: " + n, nil }
-func (f *fakeApp) Compact() (string, error)                  { f.compacts++; return "compactado", nil }
-func (f *fakeApp) ListSubagents() []string                   { return []string{"research: explora"} }
+func (f *fakeApp) ResumeSession(id string) (string, error) {
+	f.resumed = id
+	return "reanudada " + id, nil
+}
+func (f *fakeApp) NewSession() (string, error) { f.newed++; return "sesión nueva", nil }
+func (f *fakeApp) SetStrategy(n string) (string, error) {
+	f.strategy = n
+	return "estrategia: " + n, nil
+}
+func (f *fakeApp) Compact() (string, error) { f.compacts++; return "compactado", nil }
+func (f *fakeApp) ListSubagents() []string  { return []string{"research: explora"} }
 
 func (f *fakeApp) Connect(p, model, key string) (string, error) {
 	f.connected = [3]string{p, model, key}
 	return "conectado: " + p, nil
 }
 
-func (f *fakeApp) CostReport() (string, error) { return "sesión actual: $0.0000\nhistorial: (vacío)", nil }
+func (f *fakeApp) CostReport() (string, error) {
+	return "sesión actual: $0.0000\nhistorial: (vacío)", nil
+}
 
-func (f *fakeApp) SelfUpdate(context.Context) (string, error) { f.updated++; return "actualizado a v9.9.9", nil }
+func (f *fakeApp) SelfUpdate(context.Context) (string, error) {
+	f.updated++
+	return "actualizado a v9.9.9", nil
+}
+
+func (f *fakeApp) ActiveProvider() string   { return "deepseek" }
+func (f *fakeApp) Model() string            { return cmp.Or(f.curModel, "deepseek-v4-flash") }
+func (f *fakeApp) KeyedProviders() []string { return []string{"deepseek", "anthropic"} }
+func (f *fakeApp) SetModel(m string) (string, error) {
+	f.curModel = m
+	return "modelo: " + m, nil
+}
 
 func (f *fakeApp) Mode() string { return cmp.Or(f.mode, "normal") }
 func (f *fakeApp) SetMode(name string) (string, error) {
@@ -75,10 +95,28 @@ func TestDispatch(t *testing.T) {
 		}
 	})
 
-	t.Run("/model cambia el modelo", func(t *testing.T) {
-		r, err := Dispatch("/model claude-opus-5", app, p)
-		if err != nil || p.Model() != "claude-opus-5" || !strings.Contains(r.Output, "claude-opus-5") {
-			t.Fatalf("r=%+v model=%q err=%v", r, p.Model(), err)
+	t.Run("/model con Modeler cambia el modelo en la conversación", func(t *testing.T) {
+		r, err := Dispatch("/model deepseek-v4-pro", app, p)
+		if err != nil || !strings.Contains(r.Output, "deepseek-v4-pro") {
+			t.Fatalf("r=%+v err=%v", r, err)
+		}
+		if app.Model() != "deepseek-v4-pro" {
+			t.Fatalf("el modelo no cambió: %q", app.Model())
+		}
+	})
+
+	t.Run("/model sin Modeler usa el provider", func(t *testing.T) {
+		p2 := provider.NewMock()
+		r, err := Dispatch("/model gpt-4o", bareConv{}, p2)
+		if err != nil || p2.Model() != "gpt-4o" || !strings.Contains(r.Output, "gpt-4o") {
+			t.Fatalf("r=%+v model=%q err=%v", r, p2.Model(), err)
+		}
+	})
+
+	t.Run("/model sin args muestra el actual", func(t *testing.T) {
+		r, err := Dispatch("/model", app, p)
+		if err != nil || !strings.Contains(r.Output, app.Model()) {
+			t.Fatalf("r=%+v err=%v", r, err)
 		}
 	})
 

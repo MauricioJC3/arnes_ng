@@ -14,7 +14,8 @@ import (
 // Options bundles everything Run needs.
 type Options struct {
 	Conv       command.Conversation
-	Provider   provider.Provider
+	Provider   provider.Provider        // static; used only when ProviderFn is nil
+	ProviderFn func() provider.Provider // live provider getter (survives /connect)
 	SessionID  func() string
 	Stats      func() int
 	Cost       func() string
@@ -31,6 +32,7 @@ func Run(o Options) error {
 	m := New(Config{
 		Conv:       o.Conv,
 		Provider:   o.Provider,
+		ProviderFn: o.ProviderFn,
 		SessionID:  o.SessionID,
 		Stats:      o.Stats,
 		Cost:       o.Cost,
