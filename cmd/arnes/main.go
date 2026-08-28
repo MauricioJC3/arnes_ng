@@ -191,6 +191,8 @@ func run() error {
 	// base plus delegate. Subagents draw from the base only (no recursion).
 	base := tool.NewRegistry(
 		tool.Bash{Timeout: 30 * time.Second},
+		tool.Grep{},
+		tool.Glob{},
 		tool.ReadFile{},
 		tool.WriteFile{},
 		tool.EditFile{},
