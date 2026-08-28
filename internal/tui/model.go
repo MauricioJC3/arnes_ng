@@ -87,7 +87,7 @@ func (m Model) state() uiState {
 		return stateConnectForm
 	case m.model != nil:
 		return stateModelForm
-	case m.pending != nil:
+	case m.approvalPrompt.active():
 		return stateApproval
 	case m.busy:
 		return stateBusy
@@ -106,15 +106,15 @@ type Model struct {
 	theme     Theme
 	styles    Styles
 
-	transcript  // scrollback: entries, in-flight text, viewport, markdown renderer
-	promptInput // the text prompt, its "/…" command menu, and the ↑/↓ recall history
-	turn        // in-flight agent work: busy flag, cancel, result/delta channels
+	transcript     // scrollback: entries, in-flight text, viewport, markdown renderer
+	promptInput    // the text prompt, its "/…" command menu, and the ↑/↓ recall history
+	turn           // in-flight agent work: busy flag, cancel, result/delta channels
+	approvalPrompt // the tool call awaiting a y/n decision, if any
 
 	sp spinner.Model
 
 	width, height int
 
-	pending    *approval.Request
 	connect    *connectForm
 	model      *modelForm
 	listModels ListModelsFunc
@@ -254,7 +254,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// never an accident. It still just answers a pending approval, and it
 		// does not quit mid-turn (Ctrl+C cancels the turn).
 		if k == "esc" {
-			if m.pending != nil {
+			if m.approvalPrompt.active() {
 				return m.answerApproval(msg), nil
 			}
 			if m.busy {
@@ -310,7 +310,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// fall through to the textarea below
 			}
 		}
-		if m.pending != nil {
+		if m.approvalPrompt.active() {
 			return m.answerApproval(msg), nil
 		}
 		if msg.Type == tea.KeyEnter && !m.busy {
@@ -374,8 +374,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case approvalMsg:
 		// Commit the pre-tool text the model streamed so far as its own entry.
 		m.commitLive()
-		req := approval.Request(msg)
-		m.pending = &req
+		m.approvalPrompt.open(approval.Request(msg))
 		return m, waitForApproval(m.approvals) // re-arm for the next request
 
 	case runResult:
@@ -553,7 +552,7 @@ func (m Model) cancelWithCtrlC() (tea.Model, tea.Cmd) {
 	case m.model != nil:
 		m.model = nil
 		m.add(kindInfo, "/model cancelado")
-	case m.pending != nil:
+	case m.approvalPrompt.active():
 		return m.answerApproval(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}), nil
 	case m.menu.open:
 		m.menu = commandMenu{}
@@ -567,18 +566,11 @@ func (m Model) cancelWithCtrlC() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// answerApproval consumes a y/n keypress while a tool call is pending.
+// answerApproval consumes a y/n keypress while a tool call is pending and logs
+// the outcome. A key that is not a decision leaves the request pending.
 func (m Model) answerApproval(msg tea.KeyMsg) Model {
-	name := m.pending.Call.Name
-	switch strings.ToLower(msg.String()) {
-	case "y", "s", "enter":
-		m.pending.Reply(true)
-		m.add(kindInfo, "✓ "+name+" permitido")
-		m.pending = nil
-	case "n", "esc":
-		m.pending.Reply(false)
-		m.add(kindInfo, "✗ "+name+" denegado")
-		m.pending = nil
+	if line := m.approvalPrompt.answer(msg.String()); line != "" {
+		m.add(kindInfo, line)
 	}
 	return m
 }
