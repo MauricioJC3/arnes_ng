@@ -167,6 +167,29 @@ func TestAppNewAndResumeByPrefix(t *testing.T) {
 	}
 }
 
+func TestCostLine(t *testing.T) {
+	if got := costLine("claude-opus-5", 1_000_000, 0); got != "$5.0000" {
+		t.Fatalf("costLine opus-5 1M in = %q, quiero $5.0000", got)
+	}
+	if got := costLine("modelo-fantasma", 999, 999); got != "" {
+		t.Fatalf("un modelo sin tarifa debería dar cadena vacía, dio %q", got)
+	}
+}
+
+func TestAppSessionUsageResetsOnNew(t *testing.T) {
+	a := newTestApp(t)
+	if _, err := a.NewSession(); err != nil {
+		t.Fatal(err)
+	}
+	a.usedIn, a.usedOut = 500, 40
+	if _, err := a.NewSession(); err != nil {
+		t.Fatal(err)
+	}
+	if in, out := a.SessionUsage(); in != 0 || out != 0 {
+		t.Fatalf("SessionUsage tras /new = %d/%d, quiero 0/0", in, out)
+	}
+}
+
 func TestAppResumeMissing(t *testing.T) {
 	a := newTestApp(t)
 	if _, err := a.ResumeSession("20990101-000000-ffff"); err == nil {

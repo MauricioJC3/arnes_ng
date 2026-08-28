@@ -185,6 +185,11 @@ func (m Model) statusBar() string {
 	if m.stats != nil {
 		seg = append(seg, "~"+humanTokens(m.stats())+" ctx")
 	}
+	if m.cost != nil {
+		if c := m.cost(); c != "" {
+			seg = append(seg, m.styles.Success.Render(c))
+		}
+	}
 	if m.busy {
 		seg = append(seg, m.sp.View()+" trabajando")
 	} else if !m.vp.AtBottom() {

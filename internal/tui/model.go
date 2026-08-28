@@ -25,6 +25,7 @@ type Config struct {
 	Provider  provider.Provider
 	SessionID func() string // read live: it changes with /new and /resume
 	Stats     func() int    // estimated context tokens; nil to hide
+	Cost      func() string // running session cost, e.g. "$0.0421"; nil/"" hides it
 	Approvals chan approval.Request
 	Deltas    chan string // streamed text chunks; nil when streaming is off
 	Theme     Theme
@@ -65,6 +66,7 @@ type Model struct {
 	prov      provider.Provider
 	sessionID func() string
 	stats     func() int
+	cost      func() string
 	theme     Theme
 	styles    Styles
 
@@ -111,6 +113,7 @@ func New(cfg Config) Model {
 		prov:      cfg.Provider,
 		sessionID: cfg.SessionID,
 		stats:     cfg.Stats,
+		cost:      cfg.Cost,
 		theme:     cfg.Theme,
 		styles:    styles,
 		ta:        ta,

@@ -17,6 +17,7 @@ type Options struct {
 	Provider  provider.Provider
 	SessionID func() string
 	Stats     func() int
+	Cost      func() string
 	Approvals chan approval.Request
 	Deltas    chan string
 	Theme     Theme
@@ -30,6 +31,7 @@ func Run(o Options) error {
 		Provider:  o.Provider,
 		SessionID: o.SessionID,
 		Stats:     o.Stats,
+		Cost:      o.Cost,
 		Approvals: o.Approvals,
 		Deltas:    o.Deltas,
 		Theme:     o.Theme,

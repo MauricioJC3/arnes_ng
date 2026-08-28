@@ -306,6 +306,30 @@ func TestAgentStreaming(t *testing.T) {
 		}
 	})
 
+	t.Run("Usage acumula tokens de todas las llamadas", func(t *testing.T) {
+		p := provider.NewMock(
+			provider.Response{
+				ToolCalls:  []provider.ToolCall{{ID: "c", Name: "echo", Input: []byte(`{}`)}},
+				StopReason: provider.StopToolUse,
+				Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10},
+			},
+			provider.Response{
+				Text:       "listo",
+				StopReason: provider.StopEndTurn,
+				Usage:      provider.Usage{InputTokens: 130, OutputTokens: 5},
+			},
+		)
+		ft := &fakeTool{name: "echo"}
+		a := New(p, tool.NewRegistry(ft), approval.AllowAll{})
+		if _, err := a.Run(ctx, "dale"); err != nil {
+			t.Fatal(err)
+		}
+		in, out := a.Usage()
+		if in != 230 || out != 15 {
+			t.Fatalf("Usage = %d/%d, quiero 230/15", in, out)
+		}
+	})
+
 	t.Run("provider que no es Streamer cae a SendMessage", func(t *testing.T) {
 		a := New(noStreamProvider{text: "respuesta directa"}, tool.NewRegistry(), approval.AllowAll{},
 			WithStreaming(true), WithDeltaFn(func(string) { t.Fatal("no debería emitir deltas") }))

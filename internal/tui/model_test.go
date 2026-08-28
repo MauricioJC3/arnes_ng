@@ -201,6 +201,38 @@ func TestModelStatusBarShowsContextTokens(t *testing.T) {
 	}
 }
 
+func TestModelStatusBarShowsCost(t *testing.T) {
+	appr := make(chan approval.Request)
+	m := New(Config{
+		Conv:      &fakeConv{},
+		Provider:  provider.NewMock(),
+		SessionID: func() string { return "s" },
+		Cost:      func() string { return "$0.0421" },
+		Approvals: appr,
+		Theme:     DefaultTheme(),
+	})
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m = tm.(Model)
+	if !strings.Contains(m.View(), "$0.0421") {
+		t.Fatalf("la status bar no muestra el costo:\n%s", m.View())
+	}
+}
+
+func TestModelStatusBarHidesEmptyCost(t *testing.T) {
+	appr := make(chan approval.Request)
+	m := New(Config{
+		Conv: &fakeConv{}, Provider: provider.NewMock(),
+		SessionID: func() string { return "s" },
+		Cost:      func() string { return "" }, // modelo sin tarifa
+		Approvals: appr, Theme: DefaultTheme(),
+	})
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m = tm.(Model)
+	if strings.Contains(m.View(), "$") {
+		t.Fatalf("no debería mostrar '$' con costo vacío:\n%s", m.View())
+	}
+}
+
 func TestModelScrollKeys(t *testing.T) {
 	m, _ := newModel(t, &fakeConv{})
 	for i := 0; i < 40; i++ {

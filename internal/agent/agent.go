@@ -29,6 +29,8 @@ type Agent struct {
 
 	stream  bool
 	onDelta func(string) // text deltas when streaming
+
+	usedIn, usedOut int // cumulative token usage for this agent
 }
 
 // Option configures an Agent at construction.
@@ -94,6 +96,10 @@ func New(p provider.Provider, tools *tool.Registry, ap approval.Approver, opts .
 // History returns the running message log (for tests, debug view, persistence).
 func (a *Agent) History() []provider.Message { return a.history }
 
+// Usage returns the cumulative input/output token counts across every provider
+// call this agent has made.
+func (a *Agent) Usage() (in, out int) { return a.usedIn, a.usedOut }
+
 // CompactorName reports the active compaction strategy.
 func (a *Agent) CompactorName() string { return a.compactor.Name() }
 
@@ -158,6 +164,8 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("provider: %w", err)
 		}
+		a.usedIn += resp.Usage.InputTokens
+		a.usedOut += resp.Usage.OutputTokens
 
 		a.history = append(a.history, provider.Message{
 			Role:      provider.RoleAssistant,

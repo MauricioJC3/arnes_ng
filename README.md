@@ -18,6 +18,10 @@ que lo envuelve.
 - **Gateway de aprobación**: nada se ejecuta sin un sí. Denegar no rompe el bucle.
 - **Modos de permisos**: `normal` (pregunta), `auto` (ejecuta todo), `plan`
   (solo lectura, el modelo propone un plan). Se ciclan con `shift+tab`.
+- **Reglas del proyecto**: si hay un `AGENTS.md` (o `agent.md` / `.arnes/agent.md`)
+  en el directorio, su contenido se inyecta al system prompt.
+- **Costo en vivo**: la barra de estado muestra el gasto acumulado de la sesión
+  (`$0.0421`) según la tarifa del modelo.
 - **Sesiones persistentes**: cada turno se guarda; se reanudan por id o prefijo.
 - **Compactación de contexto**: `none`, `sliding`, `summarize`, con umbral de tokens.
 - **Subagentes**: delegación a agentes especializados (`research`, `test-writer`),
@@ -55,6 +59,7 @@ Las variables ganan sobre el archivo de config.
 | `ARNES_COMPACT` | `off` (default) `\|` `sliding` `\|` `summarize` |
 | `ARNES_COMPACT_AT` | umbral de tokens para auto-compactar (default 120000) |
 | `ARNES_RESUME` | id (o prefijo) de sesión a reanudar al arrancar |
+| `ARNES_RULES` | ruta a un archivo de reglas del proyecto (default: `AGENTS.md` en el cwd) |
 | `ARNES_CONFIG` / `ARNES_THEME` / `ARNES_MCP` / `ARNES_SUBAGENTS` | rutas alternativas |
 | `ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY` / `MOONSHOT_API_KEY` / `OPENAI_API_KEY` | API keys por entorno |
 

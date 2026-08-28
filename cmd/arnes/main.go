@@ -41,6 +41,7 @@ import (
 	"github.com/andresmjimenez/arnes/internal/memory"
 	"github.com/andresmjimenez/arnes/internal/provider"
 	"github.com/andresmjimenez/arnes/internal/repl"
+	"github.com/andresmjimenez/arnes/internal/rules"
 	"github.com/andresmjimenez/arnes/internal/session"
 	"github.com/andresmjimenez/arnes/internal/subagent"
 	"github.com/andresmjimenez/arnes/internal/tool"
@@ -143,6 +144,17 @@ func run() error {
 	}
 	a.subagents = subagent.NewRegistry(subDefs...)
 
+	cwd, _ := os.Getwd()
+	rulesText, rulesSrc, err := rules.Load(cwd, os.Getenv("ARNES_RULES"))
+	if err != nil {
+		return err
+	}
+	a.rules = rules.Wrap(rulesText, rulesSrc)
+	rulesLabel := "sin reglas"
+	if rulesSrc != "" {
+		rulesLabel = "reglas " + rulesSrc
+	}
+
 	// The base pool has every tool except delegate; the agent's registry is the
 	// base plus delegate. Subagents draw from the base only (no recursion).
 	base := tool.NewRegistry(
@@ -183,8 +195,8 @@ func run() error {
 		return err
 	}
 
-	summary := fmt.Sprintf("proveedor %s · modelo %s · modo %s · sesión %s · compactación %s · subagentes %d · mcp %d tools",
-		a.providerName, prov.Model(), a.mode, a.sess.ID, a.ag.CompactorName(), a.subagents.Len(), mcpTools)
+	summary := fmt.Sprintf("proveedor %s · modelo %s · modo %s · %s · sesión %s · compactación %s · subagentes %d · mcp %d tools",
+		a.providerName, prov.Model(), a.mode, rulesLabel, a.sess.ID, a.ag.CompactorName(), a.subagents.Len(), mcpTools)
 
 	if uiMode == "tui" {
 		theme, err := loadTheme()
@@ -196,6 +208,10 @@ func run() error {
 			Provider:  a.prov,
 			SessionID: func() string { return a.sess.ID },
 			Stats:     func() int { return compact.EstimateTokens(a.ag.History()) },
+			Cost: func() string {
+				in, out := a.SessionUsage()
+				return costLine(a.prov.Model(), in, out)
+			},
 			Approvals: approvals,
 			Deltas:    deltas,
 			Theme:     theme,
@@ -265,10 +281,12 @@ type app struct {
 	compactAt     int
 	streaming     bool
 	deltas        chan string
+	rules         string // project rules, already wrapped for the system prompt
 
-	sess *session.Session
-	ag   *agent.Agent
-	conv *session.Persisting
+	sess            *session.Session
+	ag              *agent.Agent
+	conv            *session.Persisting
+	usedIn, usedOut int // cumulative token usage for the current session
 }
 
 // Connect implements command.Connector: switch provider (and optionally model /
@@ -369,7 +387,7 @@ func (a *app) SetMode(name string) (string, error) {
 // rebuild swaps in a fresh agent + persister for the given session/history.
 func (a *app) rebuild(sess *session.Session, history []provider.Message) {
 	opts := []agent.Option{
-		agent.WithSystem(systemPrompt + modeAddendum(a.mode)),
+		agent.WithSystem(systemPrompt + a.rules + modeAddendum(a.mode)),
 		agent.WithHistory(history),
 		agent.WithWarnFn(func(err error) { fmt.Fprintln(os.Stderr, "arnés:", err) }),
 	}
@@ -387,10 +405,19 @@ func (a *app) rebuild(sess *session.Session, history []provider.Message) {
 	a.conv = session.NewPersisting(a.ag, a.store, sess, session.WithModelFn(func() string { return a.prov.Model() }))
 }
 
-// Run implements repl.Conversation, delegating to the live conversation.
+// Run implements repl.Conversation. It delegates to the live conversation and
+// folds this turn's token usage into the session total.
 func (a *app) Run(ctx context.Context, in string) (string, error) {
-	return a.conv.Run(ctx, in)
+	beforeIn, beforeOut := a.ag.Usage()
+	out, err := a.conv.Run(ctx, in)
+	nowIn, nowOut := a.ag.Usage()
+	a.usedIn += nowIn - beforeIn
+	a.usedOut += nowOut - beforeOut
+	return out, err
 }
+
+// SessionUsage returns the cumulative token usage since this session started.
+func (a *app) SessionUsage() (in, out int) { return a.usedIn, a.usedOut }
 
 // SetStrategy implements repl.Compaction: swap the strategy at runtime.
 func (a *app) SetStrategy(name string) (string, error) {
@@ -428,6 +455,7 @@ func (a *app) ResumeSession(id string) (string, error) {
 		a.prov.SetModel(s.Model)
 	}
 	a.rebuild(s, s.Messages)
+	a.usedIn, a.usedOut = 0, 0
 	return fmt.Sprintf("reanudada %s (%d mensajes)", s.ID, len(s.Messages)), nil
 }
 
@@ -436,6 +464,7 @@ func (a *app) NewSession() (string, error) {
 	cwd, _ := os.Getwd()
 	s := session.New(a.providerName, a.prov.Model(), cwd)
 	a.rebuild(s, nil)
+	a.usedIn, a.usedOut = 0, 0
 	return "sesión nueva: " + s.ID, nil
 }
 
@@ -520,6 +549,16 @@ func isFalsey(s string) bool {
 	default:
 		return false
 	}
+}
+
+// costLine formats the running cost of a session for the status bar. It returns
+// "" when the model has no known price.
+func costLine(model string, in, out int) string {
+	usd, ok := provider.Cost(model, in, out)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("$%.4f", usd)
 }
 
 // configPath is ARNES_CONFIG or the default location.
