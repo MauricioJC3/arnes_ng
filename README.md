@@ -43,6 +43,33 @@ que lo envuelve.
   [glamour](https://github.com/charmbracelet/glamour). También un REPL de línea
   como fallback (`ARNES_UI=plain`).
 
+## Instalación
+
+Un comando. Baja el binario del último release y lo pone en el PATH.
+
+**Linux / macOS**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MauricioJC3/arnes_ng/main/install.sh | sh
+```
+
+**Windows** (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/MauricioJC3/arnes_ng/main/install.ps1 | iex
+```
+
+Variables opcionales: `ARNES_INSTALL_DIR` (dónde instalar) y `ARNES_VERSION`
+(un tag concreto en lugar del último).
+
+Con Go instalado:
+
+```bash
+go install github.com/MauricioJC3/arnes_ng/cmd/arnes@latest
+```
+
+Desde el fuente: `make install` (usa `go install`) o `make build` (deja `./arnes`).
+
 ## Uso
 
 ```bash

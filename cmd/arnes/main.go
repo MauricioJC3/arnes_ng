@@ -87,7 +87,16 @@ adaptá el plan y seguí con lo que sí podés hacer, o explicá qué te falta.
 Conciso y directo. Nada de preámbulos ("Voy a...", "Perfecto, entonces...") ni resúmenes al
 final salvo que se pidan. Respondé en el idioma del usuario.`
 
+// version is set at build time via -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
+	for _, a := range os.Args[1:] {
+		if a == "--version" || a == "-v" || a == "version" {
+			fmt.Println("arnes", version)
+			return
+		}
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "arnés:", err)
 		os.Exit(1)
