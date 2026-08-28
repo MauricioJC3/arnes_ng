@@ -122,9 +122,10 @@ func TestRunTimeout(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "timeout") {
 		t.Fatalf("esperaba timeout, tengo: %v", err)
 	}
-	// The hook sleeps 10s; a working 100ms timeout returns well before that. The
-	// bound is loose so a slow CI runner under -race doesn't flake.
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
+	// The hook sleeps 10s; a working 100ms timeout plus the 2s WaitDelay returns
+	// in ~2s. The bound is loose so a slow CI runner under -race doesn't flake,
+	// but still well under the 10s sleep.
+	if elapsed := time.Since(start); elapsed > 8*time.Second {
 		t.Fatalf("el timeout no cortó a tiempo (%s)", elapsed)
 	}
 }

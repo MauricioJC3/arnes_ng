@@ -172,6 +172,11 @@ func (r *Runner) run(ctx context.Context, h Hook, call provider.ToolCall) (strin
 	cmd.Dir = r.dir
 	cmd.Stdin = bytes.NewReader(payload(call))
 	cmd.Env = append(os.Environ(), "ARNES_TOOL_NAME="+call.Name)
+	// On timeout the shell is killed, but a still-running descendant (e.g. a
+	// `sleep` the shell spawned) can keep the output pipe open and make Wait
+	// block until it exits. WaitDelay caps that: Wait returns shortly after the
+	// kill regardless.
+	cmd.WaitDelay = 2 * time.Second
 
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
