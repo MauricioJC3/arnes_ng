@@ -34,9 +34,9 @@ type Config struct {
 
 // Report is the outcome of a goal run.
 type Report struct {
-	Iterations         int
-	Reason             string // completado | límite | sin progreso | cancelado | error
-	LastText           string
+	Iterations          int
+	Reason              string // completado | límite | sin progreso | cancelado | error
+	LastText            string
 	TokensIn, TokensOut int
 }
 
@@ -135,7 +135,8 @@ func buildPrompt(goal string, fresh bool) string {
 	}
 	b += "Hacé el siguiente paso concreto hacia el objetivo, usando las herramientas que necesites. " +
 		"No pidas permiso para avanzar entre pasos. " +
-		"Cuando el objetivo esté 100% terminado y verificado (los tests y el build pasan), " +
-		"respondé exactamente una línea que diga " + Sentinel + " y nada más."
+		"Si venís chocando con el mismo error, cambiá de enfoque en vez de repetir el intento. " +
+		"Cuando el objetivo esté 100% terminado y la verificación del proyecto pasa (tests y, según " +
+		"el lenguaje, vet/lint/typecheck), respondé exactamente una línea que diga " + Sentinel + " y nada más."
 	return b
 }

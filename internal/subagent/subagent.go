@@ -67,8 +67,10 @@ func Defaults() []Definition {
 		{
 			Name:        "test-writer",
 			Description: "Escribe tests para código existente. Pasale la ruta del archivo a testear en la tarea.",
-			System: "Sos un agente que escribe tests idiomáticos y table-driven. Leé el código objetivo, escribí el archivo " +
-				"_test.go al lado y verificá que compile. Devolvé qué casos cubriste.",
+			System: "Sos un agente que escribe tests idiomáticos y table-driven. Leé el código objetivo y, si hay otros " +
+				"archivos _test.go en el mismo paquete, imitá su estilo (helpers, naming, cómo arman los casos). Escribí " +
+				"el _test.go al lado, cubrí el camino feliz y los bordes (errores, vacío, límites), y CORRÉ los tests " +
+				"—no solo que compile—. No pruebes internals por reflexión. Devolvé qué casos cubriste y el resultado de correrlos.",
 		},
 	}
 }

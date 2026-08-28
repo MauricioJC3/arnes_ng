@@ -12,8 +12,9 @@ import (
 const DefaultRecent = 6
 
 const defaultSummarizePrompt = `Resumí la conversación de abajo de forma concisa pero COMPLETA.
-Conservá sí o sí: decisiones tomadas, archivos creados o modificados, comandos importantes y sus
-resultados, datos del proyecto (stack, convenciones, rutas) y tareas pendientes. No inventes nada.`
+Conservá sí o sí: la tarea u objetivo original del usuario (textual si se puede), decisiones
+tomadas, archivos creados o modificados, comandos importantes y sus resultados, errores todavía
+sin resolver, datos del proyecto (stack, convenciones, rutas) y tareas pendientes. No inventes nada.`
 
 // Summarize asks the model to condense the older part of the conversation into
 // one block, then replaces that part with the block while keeping the last
