@@ -18,6 +18,10 @@ que lo envuelve.
 - **Gateway de aprobación**: nada se ejecuta sin un sí. Denegar no rompe el bucle.
 - **Modos de permisos**: `normal` (pregunta), `auto` (ejecuta todo), `plan`
   (solo lectura, el modelo propone un plan). Se ciclan con `shift+tab`.
+- **`/goal` (Ralph loop)**: itera autónomamente hacia un objetivo, re-enviando el
+  mismo prompt cada vuelta. Corta cuando el modelo responde `ARNES_GOAL_DONE`, al
+  llegar al límite de iteraciones (default 15, `/goal 5 <obj>`), si se estanca, o
+  con `Esc`. Conviene combinarlo con el modo `auto`.
 - **Reglas del proyecto**: si hay un `AGENTS.md` (o `agent.md` / `.arnes/agent.md`)
   en el directorio, su contenido se inyecta al system prompt.
 - **Costo en vivo e historial**: la barra de estado muestra el gasto acumulado de

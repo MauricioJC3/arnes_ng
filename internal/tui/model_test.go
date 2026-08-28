@@ -522,6 +522,49 @@ func TestModelEscInterruptsTurn(t *testing.T) {
 	}
 }
 
+func TestModelGoalRun(t *testing.T) {
+	// fakeConv devuelve siempre lo mismo -> el loop corta por "sin progreso" en 2
+	m, _ := newModel(t, &fakeConv{reply: "sigo trabajando"})
+
+	m.ta.SetValue("/goal arreglá el login")
+	tm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = tm.(Model)
+	if !m.busy {
+		t.Fatal("el /goal no puso busy")
+	}
+
+	// dos iteraciones -> dos goalStepMsg
+	for want := 1; want <= 2; want++ {
+		select {
+		case s := <-m.goalCh:
+			tm, _ = m.Update(s)
+			m = tm.(Model)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("no llegó el goalStep %d", want)
+		}
+	}
+	if m.goalIter != 2 {
+		t.Fatalf("goalIter = %d, quiero 2", m.goalIter)
+	}
+	if !strings.Contains(m.View(), "⟳ objetivo 2") {
+		t.Fatalf("la status bar no muestra el progreso:\n%s", m.View())
+	}
+
+	select {
+	case r := <-m.results:
+		tm, _ = m.Update(r)
+		m = tm.(Model)
+	case <-time.After(2 * time.Second):
+		t.Fatal("el goal no terminó")
+	}
+	if m.busy || m.goalIter != 0 {
+		t.Fatalf("no se limpió el estado del goal: busy=%v iter=%d", m.busy, m.goalIter)
+	}
+	if !strings.Contains(plain(m), "sin progreso") {
+		t.Fatalf("no mostró el reporte del goal:\n%s", plain(m))
+	}
+}
+
 func TestModelRunResultAppendsWhenNoStreaming(t *testing.T) {
 	m, _ := newModel(t, &fakeConv{reply: "respuesta completa"})
 	m.ta.SetValue("hola")

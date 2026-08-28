@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/andresmjimenez/arnes/internal/command"
+	"github.com/andresmjimenez/arnes/internal/goal"
 	"github.com/andresmjimenez/arnes/internal/provider"
 )
 
@@ -63,6 +64,9 @@ func (r *REPL) handle(ctx context.Context, line string) (stop bool) {
 		if res.Output != "" {
 			fmt.Fprintln(r.out, res.Output)
 		}
+		if res.Goal != nil {
+			r.runGoal(ctx, res.Goal)
+		}
 		return res.Exit
 	}
 
@@ -73,4 +77,16 @@ func (r *REPL) handle(ctx context.Context, line string) (stop bool) {
 	}
 	fmt.Fprintln(r.out, reply)
 	return false
+}
+
+// runGoal runs a Ralph-style loop synchronously, printing the iteration count.
+func (r *REPL) runGoal(ctx context.Context, req *command.GoalRequest) {
+	rep, err := goal.Run(ctx, r.conv, req.Text, goal.Config{
+		MaxIterations: req.MaxIter,
+		Progress:      func(n, max int) { fmt.Fprintf(r.out, "— iteración %d/%d —\n", n, max) },
+	})
+	if err != nil {
+		fmt.Fprintf(r.out, "error: %v\n", err)
+	}
+	fmt.Fprintln(r.out, rep.Summary())
 }

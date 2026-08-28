@@ -16,6 +16,7 @@ import (
 
 	"github.com/andresmjimenez/arnes/internal/approval"
 	"github.com/andresmjimenez/arnes/internal/command"
+	goalpkg "github.com/andresmjimenez/arnes/internal/goal"
 	"github.com/andresmjimenez/arnes/internal/provider"
 )
 
@@ -32,11 +33,15 @@ type Config struct {
 	Greeting  string
 }
 
-// runResult carries the outcome of one agent turn back to Update.
+// runResult carries the outcome of one agent turn (or goal run) back to Update.
 type runResult struct {
 	text string
 	err  error
+	goal *goalpkg.Report // set when the turn was a /goal loop
 }
+
+// goalStepMsg is emitted before each goal iteration: [current, max].
+type goalStepMsg [2]int
 
 // approvalMsg wraps an approval.Request as a tea.Msg.
 type approvalMsg approval.Request
@@ -89,6 +94,9 @@ type Model struct {
 	histAt  int      // index into history; len(history) == showing the draft
 	draft   string   // the input the user was typing before recalling
 
+	goalCh           chan goalStepMsg
+	goalIter, goalMax int // >0 while a /goal loop is running
+
 	approvals chan approval.Request
 	deltas    chan string
 	results   chan runResult
@@ -125,6 +133,7 @@ func New(cfg Config) Model {
 		approvals: cfg.Approvals,
 		deltas:    cfg.Deltas,
 		results:   make(chan runResult, 1),
+		goalCh:    make(chan goalStepMsg, 4),
 	}
 	if cfg.Greeting != "" {
 		m.entries = append(m.entries, entry{kind: kindInfo, text: cfg.Greeting})
@@ -280,6 +289,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, waitForDelta(m.deltas)
 
+	case goalStepMsg:
+		// A new goal iteration is about to run: commit the previous one's text.
+		m.commitLive()
+		m.goalIter, m.goalMax = msg[0], msg[1]
+		m.setContent(true)
+		return m, waitForGoal(m.goalCh)
+
 	case approvalMsg:
 		// Commit the pre-tool text the model streamed so far as its own entry.
 		m.commitLive()
@@ -290,7 +306,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case runResult:
 		m.busy = false
 		m.cancel = nil
+		m.goalIter, m.goalMax = 0, 0
 		switch {
+		case msg.goal != nil:
+			m.commitLive() // the last iteration's text
+			if msg.err != nil {
+				m.add(kindError, msg.err.Error())
+			}
+			m.add(kindInfo, msg.goal.Summary())
 		case errors.Is(msg.err, context.Canceled):
 			// Keep whatever was streamed so far, then note the interruption.
 			m.commitLive()
@@ -412,6 +435,8 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 		case res.Exit:
 			m.quitting = true
 			return m, tea.Quit
+		case res.Goal != nil:
+			return m.startGoal(res.Goal)
 		case res.Output != "":
 			m.add(kindInfo, res.Output)
 		}
@@ -430,6 +455,27 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 		m.results <- runResult{text: out, err: err}
 	}()
 	return m, tea.Batch(m.sp.Tick, waitForResult(m.results))
+}
+
+// startGoal kicks off a Ralph-style goal loop as a cancellable background turn.
+func (m Model) startGoal(req *command.GoalRequest) (tea.Model, tea.Cmd) {
+	m.add(kindInfo, "objetivo: "+req.Text+"  ·  Esc para cortar")
+	m.busy = true
+	m.live = ""
+	m.ta.Blur()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancel = cancel
+	conv := m.conv
+	ch := m.goalCh
+	go func() {
+		rep, err := goalpkg.Run(ctx, conv, req.Text, goalpkg.Config{
+			MaxIterations: req.MaxIter,
+			Progress:      func(n, max int) { ch <- goalStepMsg{n, max} },
+		})
+		m.results <- runResult{goal: &rep, err: err}
+	}()
+	return m, tea.Batch(m.sp.Tick, waitForResult(m.results), waitForGoal(ch))
 }
 
 // answerApproval consumes a y/n keypress while a tool call is pending.
@@ -532,6 +578,10 @@ func waitForResult(ch chan runResult) tea.Cmd {
 
 func waitForDelta(ch chan string) tea.Cmd {
 	return func() tea.Msg { return deltaMsg(<-ch) }
+}
+
+func waitForGoal(ch chan goalStepMsg) tea.Cmd {
+	return func() tea.Msg { return <-ch }
 }
 
 // redactConnect masks the api-key argument of /connect so it never lands in the

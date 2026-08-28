@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/andresmjimenez/arnes/internal/provider"
@@ -54,10 +55,18 @@ type Coster interface {
 	CostReport() (string, error)
 }
 
-// Result is the outcome of a slash command: text to show, and whether to quit.
+// Result is the outcome of a slash command: text to show, whether to quit, and
+// an optional goal run for the front-end to kick off.
 type Result struct {
 	Output string
 	Exit   bool
+	Goal   *GoalRequest
+}
+
+// GoalRequest asks the front-end to start a Ralph-style goal loop.
+type GoalRequest struct {
+	Text    string
+	MaxIter int // 0 = the goal package's default
 }
 
 // Spec describes one slash command, for /help and for the TUI autocomplete.
@@ -73,6 +82,7 @@ func Commands() []Spec {
 		{"/help", "", "esta ayuda"},
 		{"/connect", "[prov] [modelo] [key]", "cambia de proveedor y lo deja guardado"},
 		{"/mode", "[normal|auto|plan]", "cambia el modo de permisos"},
+		{"/goal", "[maxIter] <objetivo>", "itera autónomamente hasta cumplir el objetivo"},
 		{"/cost", "", "gasto de tokens: sesión actual + historial"},
 		{"/model", "[nombre]", "muestra o cambia el modelo"},
 		{"/sessions", "", "lista las sesiones guardadas"},
@@ -146,6 +156,22 @@ func Dispatch(line string, conv Conversation, prov provider.Provider) (Result, e
 			return Result{}, err
 		}
 		return Result{Output: msg}, nil
+
+	case "/goal":
+		if len(fields) < 2 {
+			return Result{}, errors.New("uso: /goal [maxIter] <objetivo>")
+		}
+		args := fields[1:]
+		maxIter := 0
+		if n, convErr := strconv.Atoi(args[0]); convErr == nil && n > 0 && len(args) > 1 {
+			maxIter = n
+			args = args[1:]
+		}
+		text := strings.TrimSpace(strings.Join(args, " "))
+		if text == "" {
+			return Result{}, errors.New("uso: /goal [maxIter] <objetivo>")
+		}
+		return Result{Goal: &GoalRequest{Text: text, MaxIter: maxIter}}, nil
 
 	case "/cost":
 		c, ok := conv.(Coster)

@@ -168,6 +168,31 @@ func TestDispatch(t *testing.T) {
 		}
 	})
 
+	t.Run("/goal parsea objetivo y maxIter opcional", func(t *testing.T) {
+		r, err := Dispatch("/goal arreglá el bug del login", app, p)
+		if err != nil || r.Goal == nil {
+			t.Fatalf("r=%+v err=%v", r, err)
+		}
+		if r.Goal.Text != "arreglá el bug del login" || r.Goal.MaxIter != 0 {
+			t.Fatalf("goal = %+v", *r.Goal)
+		}
+
+		r, _ = Dispatch("/goal 5 escribí los tests", app, p)
+		if r.Goal == nil || r.Goal.MaxIter != 5 || r.Goal.Text != "escribí los tests" {
+			t.Fatalf("goal con maxIter = %+v", r.Goal)
+		}
+
+		// "/goal 5" solo (número sin objetivo) → el 5 es el objetivo, no maxIter
+		r, _ = Dispatch("/goal 5", app, p)
+		if r.Goal == nil || r.Goal.Text != "5" || r.Goal.MaxIter != 0 {
+			t.Fatalf("goal ='/goal 5' = %+v", r.Goal)
+		}
+
+		if _, err := Dispatch("/goal", app, p); err == nil {
+			t.Fatal("esperaba error sin objetivo")
+		}
+	})
+
 	t.Run("/cost delega en el reporte", func(t *testing.T) {
 		r, err := Dispatch("/cost", app, p)
 		if err != nil || !strings.Contains(r.Output, "sesión actual") {
