@@ -14,6 +14,7 @@
 //	ARNES_LSP           path to an lsp.json file (default ~/.arnes/lsp.json)
 //	ARNES_UI            tui (default) | plain
 //	ARNES_STREAM        off to disable live token streaming in the TUI
+//	ARNES_MOUSE         off to disable mouse capture (on by default: wheel scroll)
 //	ARNES_THEME         path to a theme JSON file (default ~/.arnes/theme.json)
 //	ARNES_CONFIG        path to the settings file (default ~/.arnes/config.json)
 //	ARNES_AUTO_UPDATE  on to let the daily check install a newer release itself

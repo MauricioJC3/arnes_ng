@@ -48,19 +48,23 @@ func Run(o Options) error {
 	})
 	opts := []tea.ProgramOption{tea.WithAltScreen()}
 	if mouseEnabled() {
-		// Capturing the mouse enables wheel scroll but disables the terminal's
-		// own text selection, so it is opt-in.
+		// Capturing the mouse gives wheel scroll over the transcript. It also
+		// takes over the terminal's own text selection -- in most terminals you
+		// hold Shift to select while the mouse is captured. Set ARNES_MOUSE=off
+		// to disable it.
 		opts = append(opts, tea.WithMouseCellMotion())
 	}
 	_, err := tea.NewProgram(m, opts...).Run()
 	return err
 }
 
+// mouseEnabled reports whether to capture the mouse (wheel scroll). On by
+// default; ARNES_MOUSE=off|0|false|no turns it off.
 func mouseEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("ARNES_MOUSE"))) {
-	case "1", "on", "true", "yes":
-		return true
-	default:
+	case "off", "0", "false", "no":
 		return false
+	default:
+		return true
 	}
 }

@@ -294,22 +294,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.vp.GotoBottom()
 			return m, nil
 		case "up":
-			// history recall while navigating, or from an empty input when there
-			// is history; otherwise scroll (empty input) or move the cursor.
-			if m.histAt < len(m.history) || (m.ta.Value() == "" && len(m.history) > 0) {
-				m.histPrev() // a no-op at the oldest entry; still consumes the key
+			// Priority: continue an in-progress history recall; then, with a
+			// non-empty input, let the textarea move the cursor; then, if the
+			// transcript is scrolled up, keep scrolling it; otherwise (at the
+			// prompt) start history recall, or scroll when there is no history.
+			switch {
+			case m.histAt < len(m.history):
+				m.histPrev()
 				return m, nil
-			}
-			if m.ta.Value() == "" {
+			case m.ta.Value() != "":
+				// fall through to the textarea
+			case !m.vp.AtBottom():
+				m.vp.ScrollUp(1)
+				return m, nil
+			case len(m.history) > 0:
+				m.histPrev()
+				return m, nil
+			default:
 				m.vp.ScrollUp(1)
 				return m, nil
 			}
 		case "down":
-			if m.histAt < len(m.history) {
+			switch {
+			case m.histAt < len(m.history):
 				m.histNext()
 				return m, nil
-			}
-			if m.ta.Value() == "" {
+			case m.ta.Value() != "":
+				// fall through to the textarea
+			case !m.vp.AtBottom():
 				m.vp.ScrollDown(1)
 				return m, nil
 			}

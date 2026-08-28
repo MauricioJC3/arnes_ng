@@ -470,6 +470,39 @@ func TestModelUpDownScrollsWhenInputEmpty(t *testing.T) {
 	}
 }
 
+func TestModelUpScrollsScrollbackEvenWithHistory(t *testing.T) {
+	m, _ := newModel(t, &fakeConv{})
+	m.history = []string{"comando viejo"} // hay historial de input
+	m.histAt = len(m.history)             // no está en medio de un recall
+	for i := 0; i < 60; i++ {
+		m.add(kindInfo, "relleno")
+	}
+	m.setContent(true)
+
+	// Estando al fondo, ↑ con input vacío arranca el recall de historial.
+	tm, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = tm.(Model)
+	if m.ta.Value() != "comando viejo" {
+		t.Fatalf("al fondo, ↑ debería recuperar del historial, tengo %q", m.ta.Value())
+	}
+
+	// Ahora scrolleado hacia arriba (no al fondo): ↑ sigue scrolleando el
+	// transcript en vez de tocar el historial.
+	m.ta.SetValue("")
+	m.histAt = len(m.history)
+	m.vp.GotoTop()
+	m.vp.ScrollDown(2) // no al fondo, no al tope
+	before := m.vp.YOffset
+	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = tm.(Model)
+	if m.vp.YOffset >= before {
+		t.Fatalf("↑ leyendo scrollback no scrolleó (YOffset %d -> %d)", before, m.vp.YOffset)
+	}
+	if m.ta.Value() != "" {
+		t.Fatalf("↑ leyendo scrollback no debería tocar el input, quedó %q", m.ta.Value())
+	}
+}
+
 // blockingConv blocks in Run until its context is cancelled.
 type blockingConv struct{ started chan struct{} }
 

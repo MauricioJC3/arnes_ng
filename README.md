@@ -124,7 +124,7 @@ Las variables ganan sobre el archivo de config.
 | `ARNES_MODEL` | override del modelo |
 | `ARNES_UI` | `tui` (default) `\|` `plain` |
 | `ARNES_STREAM` | `off` para desactivar el streaming en la TUI |
-| `ARNES_MOUSE` | `on` para captura de mouse (rueda de scroll; rompe el copiado nativo) |
+| `ARNES_MOUSE` | `off` para desactivar la captura de mouse (por defecto ON: rueda de scroll; para seleccionar texto mantené Shift) |
 | `ARNES_COMPACT` | `off` (default) `\|` `sliding` `\|` `summarize` |
 | `ARNES_COMPACT_AT` | umbral de tokens para auto-compactar (default 120000) |
 | `ARNES_RESUME` | id (o prefijo) de sesión a reanudar al arrancar |
@@ -143,7 +143,8 @@ autocompletado.
 
 `Enter` enviar · `Ctrl+C` cancelar el turno en curso (o limpiar el input) ·
 `Esc` dos veces para salir · `shift+tab` ciclar modo ·
-`↑↓` recuperar mensajes previos (input vacío) o scroll si no hay historial ·
+`↑↓` recuperar mensajes previos (estando al fondo con el input vacío) o scroll
+del transcript si ya venís leyendo hacia arriba · rueda del mouse ·
 `PgUp/PgDn` `Ctrl+U/Ctrl+D` `Home/End` scroll.
 
 ## Estructura
