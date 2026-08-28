@@ -21,7 +21,7 @@ type fakeTool struct {
 	err    error
 }
 
-func (f *fakeTool) Name() string               { return f.name }
+func (f *fakeTool) Name() string                { return f.name }
 func (f *fakeTool) Description() string         { return "herramienta falsa para tests" }
 func (f *fakeTool) InputSchema() map[string]any { return map[string]any{"type": "object"} }
 func (f *fakeTool) Execute(_ context.Context, in json.RawMessage) (string, error) {
@@ -133,6 +133,26 @@ func TestAgentRun(t *testing.T) {
 		res := a.History()[2].ToolResults
 		if len(res) != 1 || !res[0].IsError {
 			t.Fatalf("esperaba un tool result de error: %+v", res)
+		}
+	})
+
+	t.Run("un tool call con Input vacío se normaliza a {} en el historial", func(t *testing.T) {
+		p := provider.NewMock(
+			provider.Response{
+				ToolCalls:  []provider.ToolCall{{ID: "c1", Name: "echo", Input: json.RawMessage("")}},
+				StopReason: provider.StopToolUse,
+			},
+			provider.Response{Text: "ok", StopReason: provider.StopEndTurn},
+		)
+		ft := &fakeTool{name: "echo", out: "eco"}
+		a := newAgent(p, approval.AllowAll{}, ft)
+
+		if _, err := a.Run(ctx, "andá"); err != nil {
+			t.Fatal(err)
+		}
+		got := a.History()[1].ToolCalls
+		if len(got) != 1 || string(got[0].Input) != "{}" {
+			t.Fatalf("Input no se normalizó: %q", got[0].Input)
 		}
 	})
 
@@ -268,8 +288,8 @@ func TestAgentAutoCompaction(t *testing.T) {
 // noStreamProvider implements Provider but NOT Streamer.
 type noStreamProvider struct{ text string }
 
-func (noStreamProvider) Model() string        { return "no-stream" }
-func (noStreamProvider) SetModel(string)      {}
+func (noStreamProvider) Model() string   { return "no-stream" }
+func (noStreamProvider) SetModel(string) {}
 func (p noStreamProvider) SendMessage(context.Context, provider.Request) (provider.Response, error) {
 	return provider.Response{Text: p.text, StopReason: provider.StopEndTurn}, nil
 }

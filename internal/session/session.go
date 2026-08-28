@@ -60,6 +60,19 @@ func (s *Session) Meta() Meta {
 	}
 }
 
+// normalize repairs message shapes that would break json.Marshal. A tool_use
+// block truncated by the model can leave ToolCall.Input as an empty
+// json.RawMessage, which is invalid JSON; persist it as an empty object.
+func (s *Session) normalize() {
+	for i := range s.Messages {
+		for j := range s.Messages[i].ToolCalls {
+			if len(s.Messages[i].ToolCalls[j].Input) == 0 {
+				s.Messages[i].ToolCalls[j].Input = []byte("{}")
+			}
+		}
+	}
+}
+
 // title derives a short one-line label from the first user message.
 func title(s string) string {
 	s = strings.TrimSpace(strings.ReplaceAll(s, "\n", " "))

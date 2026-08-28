@@ -52,6 +52,7 @@ func (fs *FileStore) Save(s *Session) error {
 	if s.ID == "" {
 		return errors.New("la sesión no tiene id")
 	}
+	s.normalize()
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err

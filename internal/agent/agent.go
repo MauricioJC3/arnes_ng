@@ -5,6 +5,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/MauricioJC3/arnes_ng/internal/approval"
@@ -199,7 +200,7 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 		a.history = append(a.history, provider.Message{
 			Role:      provider.RoleAssistant,
 			Text:      resp.Text,
-			ToolCalls: resp.ToolCalls,
+			ToolCalls: normalizeToolCalls(resp.ToolCalls),
 		})
 
 		if resp.StopReason != provider.StopToolUse || len(resp.ToolCalls) == 0 {
@@ -214,6 +215,19 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 	}
 
 	return "", fmt.Errorf("se alcanzó el límite de %d pasos sin respuesta final", a.maxSteps)
+}
+
+// normalizeToolCalls guarantees every tool call has a valid-JSON Input before it
+// enters the history. A tool_use block truncated by the model can arrive with an
+// empty Input; an empty json.RawMessage is invalid JSON and later breaks both
+// the tool and session persistence (json.Marshal fails on it).
+func normalizeToolCalls(calls []provider.ToolCall) []provider.ToolCall {
+	for i := range calls {
+		if len(calls[i].Input) == 0 {
+			calls[i].Input = json.RawMessage("{}")
+		}
+	}
+	return calls
 }
 
 // runTool applies the approval gateway, then executes the tool. It always

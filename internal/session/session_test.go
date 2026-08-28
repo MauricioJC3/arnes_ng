@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -49,6 +50,43 @@ func TestFileStoreRoundTrip(t *testing.T) {
 	}
 }
 
+func TestFileStoreSaveNormalizesEmptyToolInput(t *testing.T) {
+	store, err := NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := New("anthropic", "claude-opus-5", "/tmp/proj")
+	// A tool_use block truncated by max_tokens can leave Input empty; an empty
+	// json.RawMessage is invalid JSON and used to break Save with
+	// "unexpected end of JSON input".
+	s.Messages = []provider.Message{
+		{Role: provider.RoleUser, Text: "hacé algo"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{
+			{ID: "c1", Name: "read_file", Input: nil},
+			{ID: "c2", Name: "grep", Input: []byte("")},
+			{ID: "c3", Name: "glob", Input: []byte(`{"pattern":"*.go"}`)},
+		}},
+	}
+
+	if err := store.Save(s); err != nil {
+		t.Fatalf("Save no debería fallar por un Input vacío: %v", err)
+	}
+	got, err := store.Load(s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tc := got.Messages[1].ToolCalls
+	if string(tc[0].Input) != "{}" || string(tc[1].Input) != "{}" {
+		t.Fatalf("Input vacío no se normalizó a '{}': %q %q", tc[0].Input, tc[1].Input)
+	}
+	// A valid Input survives (MarshalIndent may re-indent it, so compare parsed).
+	var m map[string]string
+	if err := json.Unmarshal(tc[2].Input, &m); err != nil || m["pattern"] != "*.go" {
+		t.Fatalf("un Input válido no debería alterarse: %q (%v)", tc[2].Input, err)
+	}
+}
+
 func TestFileStoreLoadMissing(t *testing.T) {
 	store, _ := NewFileStore(t.TempDir())
 	if _, err := store.Load("no-existe"); !errors.Is(err, ErrNotFound) {
@@ -58,9 +96,9 @@ func TestFileStoreLoadMissing(t *testing.T) {
 
 // fakeAgent implements the Agent interface for the persister tests.
 type fakeAgent struct {
-	replies      []string
-	calls        int
-	hist         []provider.Message
+	replies       []string
+	calls         int
+	hist          []provider.Message
 	useIn, useOut int
 }
 

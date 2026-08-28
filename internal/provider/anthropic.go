@@ -210,10 +210,17 @@ func fromMessage(msg *anthropic.Message) Response {
 		case anthropic.TextBlock:
 			resp.Text += b.Text
 		case anthropic.ToolUseBlock:
+			// A tool_use block truncated by max_tokens can arrive with an empty
+			// Input; an empty json.RawMessage is invalid JSON and breaks both the
+			// tool and session persistence. Normalize it to an empty object.
+			input := json.RawMessage(b.Input)
+			if len(input) == 0 {
+				input = json.RawMessage("{}")
+			}
 			resp.ToolCalls = append(resp.ToolCalls, ToolCall{
 				ID:    b.ID,
 				Name:  b.Name,
-				Input: json.RawMessage(b.Input),
+				Input: input,
 			})
 		}
 	}
