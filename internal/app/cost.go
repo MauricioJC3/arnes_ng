@@ -9,6 +9,9 @@ import (
 )
 
 // SessionUsage returns the cumulative token usage since this session started.
+// The input side is weighted for Anthropic prompt caching (see
+// provider.Usage.EffectiveInputTokens), so feeding it to provider.Cost gives the
+// real spend rather than undercounting the replayed cached prefix.
 func (a *App) SessionUsage() (in, out int) { return a.usedIn, a.usedOut }
 
 // CostReport implements command.Coster: the current session's spend plus a

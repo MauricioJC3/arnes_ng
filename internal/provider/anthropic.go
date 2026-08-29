@@ -230,8 +230,10 @@ func fromMessage(msg *anthropic.Message) Response {
 		resp.StopReason = StopToolUse
 	}
 	resp.Usage = Usage{
-		InputTokens:  int(msg.Usage.InputTokens),
-		OutputTokens: int(msg.Usage.OutputTokens),
+		InputTokens:              int(msg.Usage.InputTokens),
+		OutputTokens:             int(msg.Usage.OutputTokens),
+		CacheReadInputTokens:     int(msg.Usage.CacheReadInputTokens),
+		CacheCreationInputTokens: int(msg.Usage.CacheCreationInputTokens),
 	}
 	return resp
 }

@@ -27,3 +27,21 @@ func TestCost(t *testing.T) {
 		t.Fatal("sin precio no hay costo")
 	}
 }
+
+func TestEffectiveInputTokens(t *testing.T) {
+	// sin caché: pasa derecho
+	if got := (Usage{InputTokens: 500}).EffectiveInputTokens(); got != 500 {
+		t.Fatalf("sin caché = %d, quiero 500", got)
+	}
+	// cache read a 0.1x, cache write (5 min) a 1.25x, sumados al input fresco
+	u := Usage{InputTokens: 100, CacheReadInputTokens: 10_000, CacheCreationInputTokens: 400}
+	// 100 + 10000/10 + 400*5/4 = 100 + 1000 + 500 = 1600
+	if got := u.EffectiveInputTokens(); got != 1600 {
+		t.Fatalf("ponderado = %d, quiero 1600", got)
+	}
+	// el costo sale exacto porque Cost es lineal y la caché se factura a tarifa de input
+	usd, ok := Cost("claude-opus-5", u.EffectiveInputTokens(), 0)
+	if !ok || math.Abs(usd-(1600.0/1e6*5)) > 1e-12 {
+		t.Fatalf("usd=%v ok=%v", usd, ok)
+	}
+}

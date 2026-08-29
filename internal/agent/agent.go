@@ -194,7 +194,9 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("provider: %w", err)
 		}
-		a.usedIn += resp.Usage.InputTokens
+		// EffectiveInputTokens folds Anthropic's cache buckets in at their billing
+		// weight, so the running cost stays accurate on long cached sessions.
+		a.usedIn += resp.Usage.EffectiveInputTokens()
 		a.usedOut += resp.Usage.OutputTokens
 
 		a.history = append(a.history, provider.Message{

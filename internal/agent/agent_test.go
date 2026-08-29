@@ -350,6 +350,27 @@ func TestAgentStreaming(t *testing.T) {
 		}
 	})
 
+	t.Run("Usage pondera los tokens de caché de Anthropic", func(t *testing.T) {
+		p := provider.NewMock(provider.Response{
+			Text:       "listo",
+			StopReason: provider.StopEndTurn,
+			// 50 fresco + 20000 cache-read (0.1x = 2000) + 800 cache-write (1.25x = 1000) = 3050
+			Usage: provider.Usage{
+				InputTokens:              50,
+				OutputTokens:             7,
+				CacheReadInputTokens:     20_000,
+				CacheCreationInputTokens: 800,
+			},
+		})
+		a := New(p, tool.NewRegistry(), approval.AllowAll{})
+		if _, err := a.Run(ctx, "dale"); err != nil {
+			t.Fatal(err)
+		}
+		if in, out := a.Usage(); in != 3050 || out != 7 {
+			t.Fatalf("Usage con caché = %d/%d, quiero 3050/7", in, out)
+		}
+	})
+
 	t.Run("provider que no es Streamer cae a SendMessage", func(t *testing.T) {
 		a := New(noStreamProvider{text: "respuesta directa"}, tool.NewRegistry(), approval.AllowAll{},
 			WithStreaming(true), WithDeltaFn(func(string) { t.Fatal("no debería emitir deltas") }))

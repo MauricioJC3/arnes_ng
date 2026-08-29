@@ -89,7 +89,7 @@ type App struct {
 	sess            *session.Session
 	ag              *agent.Agent
 	conv            *session.Persisting
-	usedIn, usedOut int // cumulative token usage for the current session
+	usedIn, usedOut int // cumulative token usage; input is cache-weighted for cost (see provider.Usage.EffectiveInputTokens)
 }
 
 // New builds an App from its dependencies. The tool pool is set separately with

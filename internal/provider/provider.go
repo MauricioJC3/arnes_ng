@@ -57,9 +57,27 @@ type ToolDef struct {
 }
 
 // Usage is the token accounting for one call (feeds the cost status bar later).
+//
+// Anthropic prompt caching splits the input into three buckets billed at
+// different rates: fresh InputTokens at 1x, CacheReadInputTokens (the replayed
+// prefix) at ~0.1x, and CacheCreationInputTokens (the prefix just written to a
+// 5-minute cache) at ~1.25x. Providers without caching leave the two cache
+// fields at zero.
 type Usage struct {
-	InputTokens  int
-	OutputTokens int
+	InputTokens              int
+	OutputTokens             int
+	CacheReadInputTokens     int
+	CacheCreationInputTokens int
+}
+
+// EffectiveInputTokens folds the two cache buckets into an input-token count at
+// their billing weight relative to the base input rate (reads at 0.1x, 5-minute
+// writes at 1.25x). Because per-token pricing is linear and cache tokens always
+// bill at the input rate, feeding this to Cost() yields the exact dollar figure
+// -- a session replaying a big cached prefix each turn is no longer undercounted
+// as if only the newest message had a price.
+func (u Usage) EffectiveInputTokens() int {
+	return u.InputTokens + u.CacheReadInputTokens/10 + u.CacheCreationInputTokens*5/4
 }
 
 // Request is everything the harness sends for one model call.

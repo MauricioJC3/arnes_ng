@@ -86,7 +86,7 @@ func TestFromMessageNormalizesContent(t *testing.T) {
 			{"type": "text", "text": "voy a listar"},
 			{"type": "tool_use", "id": "tu_1", "name": "bash", "input": {"command": "ls"}}
 		],
-		"usage": {"input_tokens": 12, "output_tokens": 7}
+		"usage": {"input_tokens": 12, "output_tokens": 7, "cache_read_input_tokens": 900, "cache_creation_input_tokens": 40}
 	}`
 	msg := &anthropic.Message{}
 	if err := json.Unmarshal([]byte(fixture), msg); err != nil {
@@ -113,6 +113,9 @@ func TestFromMessageNormalizesContent(t *testing.T) {
 	}
 	if resp.Usage.InputTokens != 12 || resp.Usage.OutputTokens != 7 {
 		t.Errorf("Usage mal normalizado: %+v", resp.Usage)
+	}
+	if resp.Usage.CacheReadInputTokens != 900 || resp.Usage.CacheCreationInputTokens != 40 {
+		t.Errorf("tokens de caché no normalizados: %+v", resp.Usage)
 	}
 }
 
