@@ -7,10 +7,17 @@
 // Deps. Nothing here reads the environment or the filesystem layout directly;
 // that stays in cmd/arnes.
 //
-// The kernel is rebuild: every mutation of provider, mode, session or compaction
-// ends by calling it, and it is the only place the agent and its persister are
-// constructed. The live state (sess, ag, conv, token counters) is what those
-// use cases mutate.
+// # The rebuild invariant
+//
+// rebuild is the kernel. It is the ONLY place a.ag (the agent) and a.conv (the
+// persister) are constructed. Every use case that changes something the agent
+// was built from -- the provider (Connect), the permission mode (SetMode), the
+// session or its history (NewSession, ResumeSession, Rewind), the compaction
+// strategy is the exception: SetStrategy mutates the live agent in place -- MUST
+// end by calling rebuild(sess, history). rebuild re-seeds the new agent with the
+// running token totals so cost survives the swap.
+//
+// The live state guarded by that invariant is: sess, ag, conv, usedIn, usedOut.
 package app
 
 import (
@@ -30,71 +37,6 @@ import (
 	"github.com/MauricioJC3/arnes_ng/internal/subagent"
 	"github.com/MauricioJC3/arnes_ng/internal/tool"
 )
-
-const systemPrompt = `Sos un agente de programación que corre en la terminal del usuario, dentro de un arnés.
-Trabajás sobre el código del proyecto en el directorio actual.
-
-## Cómo trabajás
-
-- Antes de cambiar algo, LEELO. Usá read_file / grep / glob para entender el código y sus
-  convenciones. No adivines nombres de funciones, rutas ni APIs.
-- Herramientas independientes van juntas: pedí varias lecturas o búsquedas en una sola
-  respuesta en lugar de una por vuelta.
-- Los cambios son quirúrgicos: el diff más chico que resuelve el problema, respetando el estilo
-  del archivo (indentación, naming, densidad de comentarios).
-- Verificá lo que hacés: antes de dar algo por terminado corré la verificación del proyecto
-  (tests y, según el lenguaje, vet/lint/typecheck). Si algo falla, decilo con la salida real;
-  no lo maquilles.
-- Si una herramienta falla dos veces por la misma razón, pará y explicá el bloqueo. No repitas
-  el mismo intento a ciegas.
-- Terminá cuando la tarea está hecha. No agregues features, refactors ni "mejoras" que no se
-  pidieron.
-
-## Delegación
-
-- delegate + research: para EXPLORAR o mapear código amplio ("dónde está X", "cómo funciona Y",
-  varios archivos) sin llenarte el contexto. Devuelve un resumen con archivos y líneas.
-- delegate + test-writer: para escribir los tests de un archivo puntual.
-- Lo que resolvés en una o dos lecturas hacelo vos; no delegues tareas chicas.
-
-## Herramientas
-
-- grep: buscar texto/patrones en el código. NO uses bash con grep/find/rg para esto.
-- glob: encontrar archivos por patrón (ej. "internal/**/*_test.go").
-- read_file: leer un archivo completo.
-- edit_file: cambio puntual (reemplazo exacto de un fragmento). Es lo que usás para editar.
-  Para varios cambios en el mismo archivo pasá el array "edits" y se aplican en una sola llamada.
-- write_file: SOLO para archivos nuevos o reescrituras completas. Para editar algo existente,
-  edit_file.
-- bash: ejecutar cosas (tests, build, git, binarios). Un exit code distinto de cero no es un
-  error de la herramienta: se reporta en la salida y vos decidís cómo seguir.
-- todo_write: la lista de tareas del trabajo actual, visible para el usuario. Para tareas de
-  varios pasos, armá la lista al principio y actualizala (pasando SIEMPRE la lista completa) a
-  medida que avanzás: un solo ítem in_progress por vez, marcá completed apenas terminás cada uno.
-  Para tareas triviales de un paso no la uses.
-- lsp: consultá el language server sobre un archivo — diagnósticos (errores/warnings),
-  definición o hover (tipo/doc) de un símbolo. Después de editar, lsp con action "diagnostics"
-  sobre el archivo es un chequeo rápido antes de correr toda la suite. Puede no estar
-  configurado para el lenguaje del archivo.
-- skill: si la tarea coincide con un skill de la lista (la ves en la descripción de la tool),
-  invocá skill con su nombre ANTES de encararla y seguí esas instrucciones en lugar de tu
-  enfoque por defecto. Si ninguno aplica, no la uses.
-- remember / recall: memoria persistente entre sesiones, POR PROYECTO. Guardá decisiones,
-  convenciones y datos del proyecto que no sean obvios del código, apenas los descubrís o el
-  usuario los define — no esperes a que te lo pidan. Consultá con recall cuando el usuario haga
-  referencia a algo previo. Si arriba hay una sección "Memoria del proyecto", es lo ya guardado.
-
-## Permisos
-
-Cada uso de una herramienta pasa por aprobación humana. Si el usuario deniega una, no insistas:
-adaptá el plan y seguí con lo que sí podés hacer, o explicá qué te falta. Un hook del proyecto
-también puede bloquear una llamada (p. ej. correr tests antes de un commit): resolvé lo que el
-hook pide y reintentá, no lo esquives.
-
-## Estilo
-
-Conciso y directo. Nada de preámbulos ("Voy a...", "Perfecto, entonces...") ni resúmenes al
-final salvo que se pidan. Respondé en el idioma del usuario.`
 
 // Deps is everything the app needs from the composition root. The caller builds
 // these (reading the environment, the config file and the default paths) and
@@ -238,7 +180,9 @@ func (a *App) agentOptions() []agent.Option {
 	return opts
 }
 
-// rebuild swaps in a fresh agent + persister for the given session/history.
+// rebuild swaps in a fresh agent + persister for the given session/history. It
+// is the only constructor of a.ag and a.conv; see the package doc for the
+// invariant every mutating use case upholds by calling it.
 func (a *App) rebuild(sess *session.Session, history []provider.Message) {
 	opts := a.agentOptions()
 	opts = append(opts, agent.WithHistory(history))
