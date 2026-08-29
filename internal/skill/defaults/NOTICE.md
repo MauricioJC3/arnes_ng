@@ -12,6 +12,7 @@ redistribution and modification with attribution.
 | `software-architecture` | [davila7/claude-code-templates](https://github.com/davila7/claude-code-templates) (`development/software-architecture`) | MIT |
 | `architecture-review` | [keez97/claude-architecture-skills](https://github.com/keez97/claude-architecture-skills) (`architecture-workflow`, `*-architecture-review`) | MIT |
 | `tdd-workflow` | [davila7/claude-code-templates](https://github.com/davila7/claude-code-templates) (`development/tdd-workflow`); cycle framing from the Obra "Superpowers" workflow | MIT |
+| `distinctive-web-design` | Original, written for arnes | — |
 
 The bundled files are rewrites, not verbatim copies: content was trimmed,
 made language-agnostic, and aligned to a single house style. The upstream

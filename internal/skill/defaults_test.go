@@ -12,6 +12,7 @@ import (
 // directories under defaults/.
 var wantDefaults = []string{
 	"architecture-review",
+	"distinctive-web-design",
 	"docker",
 	"docker-compose",
 	"software-architecture",
@@ -80,7 +81,7 @@ func TestSeedDefaultsAddsMissingKeepsExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(seeded)
-	want := []string{"architecture-review", "docker-compose", "software-architecture", "tdd-workflow"}
+	want := []string{"architecture-review", "distinctive-web-design", "docker-compose", "software-architecture", "tdd-workflow"}
 	if strings.Join(seeded, ",") != strings.Join(want, ",") {
 		t.Fatalf("seeded = %v, quiero solo los que faltaban: %v", seeded, want)
 	}
