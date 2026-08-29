@@ -86,7 +86,11 @@ func loadLSP() (lsp.Config, error) {
 }
 
 // loadSkills scans the project (<cwd>/.arnes/skills) and global (ARNES_SKILLS or
-// ~/.arnes/skills) skill directories.
+// ~/.arnes/skills) skill directories. On every run it first makes sure the
+// curated default skills bundled in the binary are present in the global dir,
+// adding only the ones that are missing -- a user's own skills and their edits
+// to a default are left alone, and nothing is prompted. A seeding failure never
+// blocks startup.
 func loadSkills(cwd string) ([]skill.Skill, error) {
 	global := os.Getenv("ARNES_SKILLS")
 	if global == "" {
@@ -96,6 +100,7 @@ func loadSkills(cwd string) ([]skill.Skill, error) {
 		}
 		global = p
 	}
+	_, _ = skill.SeedDefaults(global)
 	return skill.Load(skill.Dirs(cwd, global)...)
 }
 

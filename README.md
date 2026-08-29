@@ -55,7 +55,13 @@ que lo envuelve.
 - **Skills**: archivos `SKILL.md` (mismo formato que Claude Code) en
   `~/.arnes/skills/<nombre>/SKILL.md` y `<proyecto>/.arnes/skills/…` (el del
   proyecto le gana al global). La tool `skill` le muestra al modelo los skills
-  disponibles y carga el cuerpo del que elija dentro del turno.
+  disponibles y carga el cuerpo del que elija dentro del turno. En cada arranque
+  arnes se asegura de que un set curado que viene en el binario (`docker`,
+  `docker-compose`, `software-architecture`, `architecture-review`,
+  `tdd-workflow`) esté en `~/.arnes/skills`: agrega solo los que falten, sin
+  preguntar. Si editás uno, tu versión queda (no se sobreescribe); si borrás uno,
+  vuelve en el próximo arranque. Tus propios skills no se tocan. Atribución de
+  las fuentes en `internal/skill/defaults/NOTICE.md`.
 - **MCP** (Model Context Protocol): conecta servidores MCP por stdio y expone sus
   herramientas como nativas.
 - **Todo tracking**: la tool `todo_write` mantiene la lista de tareas del trabajo
