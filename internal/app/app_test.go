@@ -201,8 +201,18 @@ func TestModes(t *testing.T) {
 	if a.Mode() != ModeAuto {
 		t.Fatalf("yolo no mapeó a auto: %q", a.Mode())
 	}
-	if _, ok := a.effectiveApprover().(approval.AllowAll); !ok {
-		t.Fatalf("modo auto no usa AllowAll: %T", a.effectiveApprover())
+	g, ok := a.effectiveApprover().(approval.Guard)
+	if !ok {
+		t.Fatalf("modo auto no usa Guard: %T", a.effectiveApprover())
+	}
+	// escritura común: aprobada sin preguntar
+	if !g.Confirm(provider.ToolCall{Name: "write_file", Input: []byte(`{"path":"src/main.go"}`)}) {
+		t.Fatal("modo auto debería aprobar una escritura común")
+	}
+	// escritura a .env: cae al baseApprover (AllowAll en el test), pero el ruteo
+	// es lo que importa -- Guard no la aprueba de una
+	if _, ok := g.Inner.(approval.AllowAll); !ok {
+		t.Fatalf("Guard.Inner debería ser el baseApprover: %T", g.Inner)
 	}
 
 	if _, err := a.SetMode("marciano"); err == nil {

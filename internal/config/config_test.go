@@ -19,7 +19,7 @@ func TestLoadMissing(t *testing.T) {
 func TestSaveLoadRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sub", "config.json")
 
-	c := Config{Provider: "deepseek", Model: "deepseek-chat"}
+	c := Config{Provider: "deepseek", Model: "deepseek-chat", ProtectedPaths: []string{".env", "secrets/*"}}
 	c.SetKey("deepseek", "sk-secret")
 
 	if err := c.Save(path); err != nil {
@@ -41,17 +41,24 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if got.Provider != "deepseek" || got.Model != "deepseek-chat" || got.Keys["deepseek"] != "sk-secret" {
 		t.Fatalf("round-trip perdió datos: %+v", got)
 	}
+	if len(got.ProtectedPaths) != 2 || got.ProtectedPaths[0] != ".env" || got.ProtectedPaths[1] != "secrets/*" {
+		t.Fatalf("round-trip perdió protected_paths: %+v", got.ProtectedPaths)
+	}
 }
 
 func TestCloneIsDeep(t *testing.T) {
-	c := Config{}
+	c := Config{ProtectedPaths: []string{".env"}}
 	c.SetKey("openai", "k1")
 
 	clone := c.Clone()
 	clone.SetKey("openai", "k2")
+	clone.ProtectedPaths[0] = "changed"
 
 	if c.Keys["openai"] != "k1" {
 		t.Fatalf("Clone compartió el map: original quedó en %q", c.Keys["openai"])
+	}
+	if c.ProtectedPaths[0] != ".env" {
+		t.Fatalf("Clone compartió el slice: original quedó en %q", c.ProtectedPaths[0])
 	}
 }
 

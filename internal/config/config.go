@@ -17,6 +17,10 @@ type Config struct {
 	Mode       string            `json:"mode,omitempty"` // permission mode: normal | auto | plan
 	Keys       map[string]string `json:"keys,omitempty"` // provider name -> api key
 	AutoUpdate bool              `json:"auto_update,omitempty"`
+	// ProtectedPaths are path.Match globs that still require confirmation in auto
+	// mode (write_file / edit_file only). Empty falls back to the built-in
+	// defaults (.env, .env.*).
+	ProtectedPaths []string `json:"protected_paths,omitempty"`
 }
 
 // DefaultPath is ~/.arnes/config.json.
@@ -72,7 +76,8 @@ func (c Config) Save(path string) error {
 	return os.Rename(tmpName, path)
 }
 
-// Clone returns a deep copy (the Keys map is copied, not shared).
+// Clone returns a deep copy (the Keys map and ProtectedPaths slice are copied,
+// not shared).
 func (c Config) Clone() Config {
 	out := c
 	if c.Keys != nil {
@@ -80,6 +85,9 @@ func (c Config) Clone() Config {
 		for k, v := range c.Keys {
 			out.Keys[k] = v
 		}
+	}
+	if c.ProtectedPaths != nil {
+		out.ProtectedPaths = append([]string(nil), c.ProtectedPaths...)
 	}
 	return out
 }

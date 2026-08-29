@@ -34,11 +34,17 @@ func (a *App) SetMode(name string) (string, error) {
 	return "modo: " + mode, nil
 }
 
-// effectiveApprover is the gateway for the current mode.
+// effectiveApprover is the gateway for the current mode. Auto approves
+// everything except a write to a protected path (.env and friends), which still
+// goes to the human via the base approver.
 func (a *App) effectiveApprover() approval.Approver {
 	switch a.mode {
 	case ModeAuto:
-		return approval.AllowAll{}
+		return approval.Guard{
+			Pass:    approval.AllowAll{},
+			Inner:   a.baseApprover,
+			Protect: a.cfg.ProtectedPaths,
+		}
 	case ModePlan:
 		return approval.ReadOnly{Allowed: map[string]bool{"read_file": true, "recall": true}}
 	default:
@@ -71,7 +77,8 @@ func modeAddendum(mode string) string {
 		return "\n\nMODO PLAN ACTIVO: no modifiques nada. Investigá solo con read_file y proponé un plan " +
 			"detallado paso a paso. Las herramientas que escriben o ejecutan comandos van a ser denegadas."
 	case ModeAuto:
-		return "\n\nMODO AUTO: las herramientas se ejecutan sin pedir confirmación. Cuidado con comandos destructivos."
+		return "\n\nMODO AUTO: las herramientas se ejecutan sin pedir confirmación (salvo escrituras a rutas " +
+			"protegidas como .env, que siguen pidiendo confirmación). Cuidado con comandos destructivos."
 	default:
 		return ""
 	}
