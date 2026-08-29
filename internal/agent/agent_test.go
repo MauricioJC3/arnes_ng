@@ -31,6 +31,17 @@ func (f *fakeTool) Execute(_ context.Context, in json.RawMessage) (string, error
 	return f.out, f.err
 }
 
+// toolFunc is a Tool whose Execute is an arbitrary func (used to make one panic).
+type toolFunc struct {
+	name string
+	fn   func() (string, error)
+}
+
+func (t toolFunc) Name() string                                             { return t.name }
+func (t toolFunc) Description() string                                      { return "tool func para tests" }
+func (t toolFunc) InputSchema() map[string]any                              { return map[string]any{"type": "object"} }
+func (t toolFunc) Execute(context.Context, json.RawMessage) (string, error) { return t.fn() }
+
 func newAgent(p provider.Provider, ap approval.Approver, tools ...tool.Tool) *Agent {
 	return New(p, tool.NewRegistry(tools...), ap, WithMaxSteps(5))
 }
@@ -232,6 +243,35 @@ func TestAgentRun(t *testing.T) {
 		// El historial: assistant(call normalizado a {}) -> user(tool result de error) -> assistant final.
 		res := a.History()[2].ToolResults
 		if len(res) != 1 || !res[0].IsError || !strings.Contains(res[0].Content, "mal formados") {
+			t.Fatalf("resultado realimentado = %+v", res)
+		}
+	})
+
+	t.Run("un pánico en la tool vuelve como resultado de error, no rompe el turno", func(t *testing.T) {
+		var n int
+		p := &provider.MockProvider{}
+		p.Handler = func(provider.Request) (provider.Response, error) {
+			n++
+			if n == 1 {
+				return provider.Response{
+					ToolCalls:  []provider.ToolCall{{ID: "c", Name: "boom", Input: json.RawMessage(`{}`)}},
+					StopReason: provider.StopToolUse,
+				}, nil
+			}
+			return provider.Response{Text: "seguí igual", StopReason: provider.StopEndTurn}, nil
+		}
+		boom := toolFunc{name: "boom", fn: func() (string, error) { panic("kaboom") }}
+		a := New(p, tool.NewRegistry(boom), approval.AllowAll{}, WithMaxSteps(5))
+
+		out, err := a.Run(ctx, "usá boom")
+		if err != nil {
+			t.Fatalf("un pánico en la tool no debería fallar el turno: %v", err)
+		}
+		if out != "seguí igual" {
+			t.Fatalf("out = %q", out)
+		}
+		res := a.History()[2].ToolResults
+		if len(res) != 1 || !res[0].IsError || !strings.Contains(res[0].Content, "pánico") {
 			t.Fatalf("resultado realimentado = %+v", res)
 		}
 	})
