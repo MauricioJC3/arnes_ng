@@ -188,9 +188,11 @@ func newTodoBridge() (*todo.Store, chan []todo.Item) {
 }
 
 // compactionFromEnv reads ARNES_COMPACT / ARNES_COMPACT_AT into an auto-
-// compaction strategy and threshold. Default: disabled.
+// compaction strategy and threshold. Default: "sliding" at 120k tokens, so a
+// long session does not bloat the context and push the model into loops.
+// ARNES_COMPACT=off disables it; ARNES_COMPACT=summarize upgrades it.
 func compactionFromEnv(p provider.Provider) (compact.Strategy, int, error) {
-	name := strings.ToLower(cmp.Or(os.Getenv("ARNES_COMPACT"), "off"))
+	name := strings.ToLower(cmp.Or(os.Getenv("ARNES_COMPACT"), "sliding"))
 	if name == "off" || name == "none" || name == "" {
 		return nil, 0, nil
 	}
@@ -223,6 +225,22 @@ func maxStepsFromEnv(cfg config.Config) (int, error) {
 		return 0, fmt.Errorf("max_steps inválido en la config: %d", cfg.MaxSteps)
 	}
 	return cfg.MaxSteps, nil
+}
+
+// maxTokensFromEnv resolves the per-call output-token cap: ARNES_MAX_TOKENS wins
+// over the config file; 0 (neither set) lets the agent apply its own default.
+func maxTokensFromEnv(cfg config.Config) (int, error) {
+	if raw := os.Getenv("ARNES_MAX_TOKENS"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			return 0, fmt.Errorf("ARNES_MAX_TOKENS inválido: %q", raw)
+		}
+		return n, nil
+	}
+	if cfg.MaxTokens < 0 {
+		return 0, fmt.Errorf("max_tokens inválido en la config: %d", cfg.MaxTokens)
+	}
+	return cfg.MaxTokens, nil
 }
 
 // isFalsey reports whether s is an explicit "off" value.

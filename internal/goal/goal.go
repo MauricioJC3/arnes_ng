@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
 )
 
 // Sentinel is the line the model must output (on its own line) to end the loop.
@@ -70,10 +72,14 @@ func Run(ctx context.Context, conv Conversation, goal string, cfg Config) (Repor
 		}
 
 		text, err := c.Run(ctx, prompt)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return report(i, "cancelado", last, totIn, totOut), nil
-			}
+		var incomplete *provider.IncompleteError
+		switch {
+		case errors.Is(err, context.Canceled):
+			return report(i, "cancelado", last, totIn, totOut), nil
+		case errors.As(err, &incomplete):
+			// A turn that hit a safety limit is not a failure of the goal loop:
+			// keep the partial text and let the next iteration continue.
+		case err != nil:
 			return report(i, "error", text, totIn, totOut), err
 		}
 

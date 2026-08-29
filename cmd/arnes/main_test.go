@@ -35,8 +35,16 @@ func TestCostLine(t *testing.T) {
 }
 
 func TestCompactionFromEnv(t *testing.T) {
-	t.Run("off por defecto", func(t *testing.T) {
+	t.Run("sliding por defecto", func(t *testing.T) {
 		t.Setenv("ARNES_COMPACT", "")
+		s, at, err := compactionFromEnv(provider.NewMock())
+		if err != nil || s == nil || s.Name() != "sliding-window" || at != 120000 {
+			t.Fatalf("s=%v at=%d err=%v", s, at, err)
+		}
+	})
+
+	t.Run("off explícito desactiva", func(t *testing.T) {
+		t.Setenv("ARNES_COMPACT", "off")
 		s, at, err := compactionFromEnv(provider.NewMock())
 		if err != nil || s != nil || at != 0 {
 			t.Fatalf("s=%v at=%d err=%v", s, at, err)
@@ -59,6 +67,39 @@ func TestCompactionFromEnv(t *testing.T) {
 		t.Setenv("ARNES_COMPACT", "summarize")
 		t.Setenv("ARNES_COMPACT_AT", "muchos")
 		if _, _, err := compactionFromEnv(provider.NewMock()); err == nil {
+			t.Fatal("esperaba error")
+		}
+	})
+}
+
+func TestMaxTokensFromEnv(t *testing.T) {
+	t.Run("nada seteado devuelve 0 (el app pone el default)", func(t *testing.T) {
+		t.Setenv("ARNES_MAX_TOKENS", "")
+		n, err := maxTokensFromEnv(config.Config{})
+		if err != nil || n != 0 {
+			t.Fatalf("n=%d err=%v", n, err)
+		}
+	})
+
+	t.Run("el env gana sobre la config", func(t *testing.T) {
+		t.Setenv("ARNES_MAX_TOKENS", "16000")
+		n, err := maxTokensFromEnv(config.Config{MaxTokens: 4096})
+		if err != nil || n != 16000 {
+			t.Fatalf("n=%d err=%v", n, err)
+		}
+	})
+
+	t.Run("sin env cae a la config", func(t *testing.T) {
+		t.Setenv("ARNES_MAX_TOKENS", "")
+		n, err := maxTokensFromEnv(config.Config{MaxTokens: 4096})
+		if err != nil || n != 4096 {
+			t.Fatalf("n=%d err=%v", n, err)
+		}
+	})
+
+	t.Run("valor inválido es error", func(t *testing.T) {
+		t.Setenv("ARNES_MAX_TOKENS", "-3")
+		if _, err := maxTokensFromEnv(config.Config{}); err == nil {
 			t.Fatal("esperaba error")
 		}
 	})
