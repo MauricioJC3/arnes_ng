@@ -153,6 +153,31 @@ func TestPersistingSavesEveryTurn(t *testing.T) {
 	}
 }
 
+func TestPersistingWithModelFnTracksRuntimeModel(t *testing.T) {
+	store, _ := NewFileStore(t.TempDir())
+	sess := New("mock", "mock-1", "")
+	model := "mock-1"
+	p := NewPersisting(&fakeAgent{replies: []string{"r"}}, store, sess,
+		WithModelFn(func() string { return model }))
+
+	if p.Session() != sess {
+		t.Fatal("Session() no devuelve la sesión viva")
+	}
+
+	if _, err := p.Run(context.Background(), "uno"); err != nil {
+		t.Fatal(err)
+	}
+	model = "claude-opus-5" // el usuario hizo /model entre turnos
+	if _, err := p.Run(context.Background(), "dos"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := store.Load(sess.ID)
+	if got.Model != "claude-opus-5" {
+		t.Fatalf("Model persistido = %q, WithModelFn debería seguir el cambio en runtime", got.Model)
+	}
+}
+
 // failOnSave wraps a real store but forces Save to fail.
 type failOnSave struct{ *FileStore }
 

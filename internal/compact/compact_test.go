@@ -31,6 +31,20 @@ func TestNone(t *testing.T) {
 	}
 }
 
+// TestStrategyNames pins the identifiers shown by /compact and the status bar.
+func TestStrategyNames(t *testing.T) {
+	cases := map[string]Strategy{
+		"none":           None{},
+		"sliding-window": SlidingWindow{},
+		"summarize":      Summarize{},
+	}
+	for want, s := range cases {
+		if got := s.Name(); got != want {
+			t.Errorf("Name() = %q, quiero %q", got, want)
+		}
+	}
+}
+
 func TestSlidingWindow(t *testing.T) {
 	t.Run("historial corto no se toca", func(t *testing.T) {
 		h := history(3) // 6 mensajes

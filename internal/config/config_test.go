@@ -62,3 +62,21 @@ func TestLoadInvalidJSON(t *testing.T) {
 		t.Fatal("esperaba error")
 	}
 }
+
+// TestSaveSurfacesWriteFailure: if the config can't be written (e.g. a read-only
+// parent), Save must return an error so /connect doesn't claim a key was saved
+// when it wasn't.
+func TestSaveSurfacesWriteFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignora los permisos de directorio")
+	}
+	ro := filepath.Join(t.TempDir(), "ro")
+	if err := os.Mkdir(ro, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	c := Config{Provider: "deepseek"}
+	c.SetKey("deepseek", "sk-secret")
+	if err := c.Save(filepath.Join(ro, "sub", "config.json")); err == nil {
+		t.Fatal("guardar bajo un directorio de solo lectura debería fallar, no silenciarse")
+	}
+}
