@@ -16,6 +16,14 @@
       "sessions": 0,
       "memories": 0,
       "prompts": 1
+    },
+    {
+      "id": "9408f82f",
+      "created_by": "inre",
+      "created_at": "2026-08-29T01:24:22Z",
+      "sessions": 0,
+      "memories": 8,
+      "prompts": 0
     }
   ]
 }
