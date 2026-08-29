@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -42,7 +44,7 @@ type OpenAICompat struct {
 }
 
 // OpenAICompatConfig configures the adapter. BaseURL and Model are required;
-// APIKey is required by hosted providers; HTTP defaults to a 120s client.
+// APIKey is required by hosted providers; HTTP defaults to defaultHTTPClient().
 type OpenAICompatConfig struct {
 	BaseURL string
 	APIKey  string
@@ -50,11 +52,40 @@ type OpenAICompatConfig struct {
 	HTTP    *http.Client
 }
 
+// HTTP timeouts (package vars so tests can shrink them). A streaming turn on a
+// heavy coding task legitimately runs for minutes, so there is NO whole-request
+// timeout on the client -- that also caps the body read and was killing long
+// streams with "context deadline exceeded ... while reading body". Liveness
+// instead comes from: the caller's context (Ctrl+C), a per-connection dial
+// timeout, a whole-call context deadline on non-streaming requests
+// (requestTimeout), and a stall watchdog on streams (streamIdleTimeout).
+var (
+	requestTimeout    = 5 * time.Minute
+	streamIdleTimeout = 3 * time.Minute
+	dialTimeout       = 30 * time.Second
+)
+
+// defaultHTTPClient builds the client used when the caller supplies none. It has
+// no http.Client.Timeout on purpose (see the note above).
+func defaultHTTPClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           (&net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}).DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   15 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
+}
+
 // NewOpenAICompat builds the adapter from an explicit config.
 func NewOpenAICompat(cfg OpenAICompatConfig) *OpenAICompat {
 	httpClient := cfg.HTTP
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 120 * time.Second}
+		httpClient = defaultHTTPClient()
 	}
 	return &OpenAICompat{
 		http:    httpClient,
@@ -230,6 +261,11 @@ func retryAfter(resp *http.Response) time.Duration {
 // SendMessage builds the chat-completions payload, POSTs it, and normalizes the
 // reply into a Response.
 func (o *OpenAICompat) SendMessage(ctx context.Context, req Request) (Response, error) {
+	// The client has no whole-request timeout (streams need that); bound the
+	// non-streaming call here instead.
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+
 	maxTokens := req.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = 8192
@@ -299,7 +335,7 @@ func (o *OpenAICompat) SendMessage(ctx context.Context, req Request) (Response, 
 func (o *OpenAICompat) StreamMessage(ctx context.Context, req Request, onDelta func(string)) (Response, error) {
 	maxTokens := req.MaxTokens
 	if maxTokens <= 0 {
-		maxTokens = 4096
+		maxTokens = 8192
 	}
 	payload := ocChatRequest{
 		Model:         o.model,
@@ -317,10 +353,27 @@ func (o *OpenAICompat) StreamMessage(ctx context.Context, req Request, onDelta f
 		return Response{}, err
 	}
 
+	// A cancellable context the stall watchdog can trip -- the HTTP request must
+	// be made with THIS context so cancelling it actually unblocks the body read.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var stalled atomic.Bool
+	trip := func() { stalled.Store(true); cancel() }
+
+	// Guard connect + time-to-first-byte too: with no client Timeout, o.post
+	// would otherwise block forever on a server that accepts the socket but
+	// never sends response headers. Stopped as soon as post returns.
+	ttfb := time.AfterFunc(streamIdleTimeout, trip)
+
 	// Retry only the connection + initial status; once bytes are streaming a
 	// mid-stream failure can't be resumed.
 	httpResp, err := o.post(ctx, body, "text/event-stream")
+	ttfb.Stop()
 	if err != nil {
+		if stalled.Load() {
+			return Response{}, fmt.Errorf("openai_compat: el proveedor no respondió en %s -- reintentá o cambiá de modelo con /connect", streamIdleTimeout)
+		}
 		return Response{}, err
 	}
 	defer httpResp.Body.Close()
@@ -329,8 +382,42 @@ func (o *OpenAICompat) StreamMessage(ctx context.Context, req Request, onDelta f
 		raw, _ := io.ReadAll(httpResp.Body)
 		return Response{}, fmt.Errorf("openai_compat: HTTP %d: %s", httpResp.StatusCode, truncate(raw, 300))
 	}
-	return parseOCStream(httpResp.Body, onDelta)
+
+	sr := newStallReader(httpResp.Body, streamIdleTimeout, trip)
+	defer sr.Stop()
+	resp, err := parseOCStream(sr, onDelta)
+	if err != nil && stalled.Load() {
+		return Response{}, fmt.Errorf("openai_compat: el stream se cortó, no llegaron datos nuevos en %s "+
+			"(el modelo o el proveedor dejó de responder) -- reintentá o cambiá de modelo con /connect", streamIdleTimeout)
+	}
+	return resp, err
 }
+
+// stallReader wraps a streaming body and calls trip() if no bytes arrive for
+// idle. Each successful read pushes the deadline out, so a healthy multi-minute
+// stream is never cut -- only a silently stalled one.
+type stallReader struct {
+	r     io.Reader
+	idle  time.Duration
+	timer *time.Timer
+	done  atomic.Bool
+}
+
+func newStallReader(r io.Reader, idle time.Duration, trip func()) *stallReader {
+	s := &stallReader{r: r, idle: idle}
+	s.timer = time.AfterFunc(idle, func() { s.done.Store(true); trip() })
+	return s
+}
+
+func (s *stallReader) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if n > 0 && !s.done.Load() {
+		s.timer.Reset(s.idle)
+	}
+	return n, err
+}
+
+func (s *stallReader) Stop() { s.timer.Stop() }
 
 // parseOCStream consumes an OpenAI-style SSE body: `data: {json}` lines ended by
 // `data: [DONE]`. Tool-call fragments are keyed by index and concatenated.
@@ -346,6 +433,7 @@ func parseOCStream(body io.Reader, onDelta func(string)) (Response, error) {
 	var order []int
 	var resp Response
 	finish := ""
+	sawData := false
 
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -354,8 +442,10 @@ func parseOCStream(body io.Reader, onDelta func(string)) (Response, error) {
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
+			sawData = true
 			break
 		}
+		sawData = true
 
 		var chunk struct {
 			Choices []struct {
@@ -414,6 +504,12 @@ func parseOCStream(body io.Reader, onDelta func(string)) (Response, error) {
 	}
 	if err := sc.Err(); err != nil {
 		return Response{}, fmt.Errorf("openai_compat: stream: %w", err)
+	}
+	// A 2xx whose body carried no SSE frames at all (an HTML error page, an
+	// empty body, a proxy that closed early) would otherwise return a silent
+	// empty answer. Surface it instead.
+	if !sawData && resp.Text == "" && len(order) == 0 {
+		return Response{}, fmt.Errorf("openai_compat: el stream no devolvió datos (respuesta vacía o ilegible del proveedor)")
 	}
 
 	for _, idx := range order {
