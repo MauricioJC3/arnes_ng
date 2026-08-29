@@ -17,6 +17,9 @@ type Config struct {
 	Mode       string            `json:"mode,omitempty"` // permission mode: normal | auto | plan
 	Keys       map[string]string `json:"keys,omitempty"` // provider name -> api key
 	AutoUpdate bool              `json:"auto_update,omitempty"`
+	// MaxSteps is the tool round-trip budget for one turn. 0 uses the built-in
+	// default; ARNES_MAX_STEPS overrides both.
+	MaxSteps int `json:"max_steps,omitempty"`
 	// ProtectedPaths are path.Match globs that still require confirmation in auto
 	// mode (write_file / edit_file only). Empty falls back to the built-in
 	// defaults (.env, .env.*).

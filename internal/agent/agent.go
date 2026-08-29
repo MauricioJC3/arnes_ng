@@ -56,6 +56,12 @@ func WithSystem(s string) Option { return func(a *Agent) { a.system = s } }
 // WithMaxTokens caps output tokens per model call.
 func WithMaxTokens(n int) Option { return func(a *Agent) { a.maxTokens = n } }
 
+// DefaultMaxSteps is the tool round-trip budget for one Run when the caller sets
+// none. It is a circuit breaker against a model that never stops asking for
+// tools -- not a cap on useful work -- so it is generous; raise it with
+// WithMaxSteps (ARNES_MAX_STEPS / "max_steps" in the config).
+const DefaultMaxSteps = 50
+
 // WithMaxSteps bounds how many tool round-trips one Run may take before it
 // gives up. This is the guard against a model that never stops asking for tools.
 func WithMaxSteps(n int) Option { return func(a *Agent) { a.maxSteps = n } }
@@ -107,7 +113,7 @@ func New(p provider.Provider, tools *tool.Registry, ap approval.Approver, opts .
 		tools:     tools,
 		approver:  ap,
 		maxTokens: 4096,
-		maxSteps:  20,
+		maxSteps:  DefaultMaxSteps,
 		compactor: compact.None{},
 		warn:      func(error) {},
 	}
@@ -176,6 +182,7 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 	a.maybeCompact(ctx)
 	a.history = append(a.history, provider.Message{Role: provider.RoleUser, Text: userInput})
 
+	var lastText string
 	for step := 0; step < a.maxSteps; step++ {
 		req := provider.Request{
 			System:    a.system,
@@ -199,6 +206,7 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 		a.usedIn += resp.Usage.EffectiveInputTokens()
 		a.usedOut += resp.Usage.OutputTokens
 
+		lastText = resp.Text
 		a.history = append(a.history, provider.Message{
 			Role:      provider.RoleAssistant,
 			Text:      resp.Text,
@@ -216,7 +224,11 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 		a.history = append(a.history, provider.Message{Role: provider.RoleUser, ToolResults: results})
 	}
 
-	return "", fmt.Errorf("se alcanzó el límite de %d pasos sin respuesta final", a.maxSteps)
+	// The turn ran out of step budget mid-work. The history (including this last
+	// partial text) is kept and persisted by the caller, so the user can just
+	// say "seguí" to continue from here, or raise ARNES_MAX_STEPS / "max_steps".
+	return lastText, fmt.Errorf("me detuve tras %d pasos sin cerrar la respuesta (tope de seguridad contra loops); "+
+		"el historial quedó guardado -- mandá \"seguí\" para continuar o subí el tope con ARNES_MAX_STEPS o \"max_steps\" en la config", a.maxSteps)
 }
 
 // normalizeToolCalls guarantees every tool call has a valid-JSON Input before it

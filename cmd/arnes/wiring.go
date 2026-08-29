@@ -209,6 +209,22 @@ func compactionFromEnv(p provider.Provider) (compact.Strategy, int, error) {
 	return s, at, nil
 }
 
+// maxStepsFromEnv resolves the per-turn tool-step budget: ARNES_MAX_STEPS wins
+// over the config file; 0 (neither set) lets the agent apply its own default.
+func maxStepsFromEnv(cfg config.Config) (int, error) {
+	if raw := os.Getenv("ARNES_MAX_STEPS"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			return 0, fmt.Errorf("ARNES_MAX_STEPS inválido: %q", raw)
+		}
+		return n, nil
+	}
+	if cfg.MaxSteps < 0 {
+		return 0, fmt.Errorf("max_steps inválido en la config: %d", cfg.MaxSteps)
+	}
+	return cfg.MaxSteps, nil
+}
+
 // isFalsey reports whether s is an explicit "off" value.
 func isFalsey(s string) bool {
 	switch strings.ToLower(strings.TrimSpace(s)) {

@@ -55,7 +55,9 @@ func (f *fakeApp) Compact() (string, error) {
 	return "compactado", nil
 }
 
-func (f *fakeApp) ListSubagents() []string { return []string{"research: explora", "test-writer: testea"} }
+func (f *fakeApp) ListSubagents() []string {
+	return []string{"research: explora", "test-writer: testea"}
+}
 
 // fakeFreshApp is a Conversation that also implements FreshFactory, so /goal
 // --fresh gets a new conversation per iteration.

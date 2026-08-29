@@ -113,7 +113,7 @@ func TestRebuildSwapsAgentAndPreservesUsage(t *testing.T) {
 // TestAgentOptionsGating: the shared option set grows only with what is
 // actually configured.
 func TestAgentOptionsGating(t *testing.T) {
-	bare := &App{} // no hooks, no checkpoints, no streaming
+	bare := &App{} // no hooks, no checkpoints, no streaming, no maxSteps
 	if n := len(bare.agentOptions()); n != 2 {
 		t.Fatalf("sin nada configurado esperaba 2 opciones (system, warn), hubo %d", n)
 	}
@@ -123,9 +123,10 @@ func TestAgentOptionsGating(t *testing.T) {
 		checkpoints: checkpoint.NewStore(),
 		streaming:   true,
 		deltas:      make(chan string, 1),
+		maxSteps:    50,
 	}
-	if n := len(full.agentOptions()); n != 6 {
-		t.Fatalf("con hooks+checkpoints+streaming+deltas esperaba 6 opciones, hubo %d", n)
+	if n := len(full.agentOptions()); n != 7 {
+		t.Fatalf("con hooks+checkpoints+streaming+deltas+maxSteps esperaba 7 opciones, hubo %d", n)
 	}
 
 	noDelta := &App{streaming: true} // streaming on but no delta channel

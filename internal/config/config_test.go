@@ -19,7 +19,7 @@ func TestLoadMissing(t *testing.T) {
 func TestSaveLoadRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sub", "config.json")
 
-	c := Config{Provider: "deepseek", Model: "deepseek-chat", ProtectedPaths: []string{".env", "secrets/*"}}
+	c := Config{Provider: "deepseek", Model: "deepseek-chat", MaxSteps: 120, ProtectedPaths: []string{".env", "secrets/*"}}
 	c.SetKey("deepseek", "sk-secret")
 
 	if err := c.Save(path); err != nil {
@@ -43,6 +43,9 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 	if len(got.ProtectedPaths) != 2 || got.ProtectedPaths[0] != ".env" || got.ProtectedPaths[1] != "secrets/*" {
 		t.Fatalf("round-trip perdió protected_paths: %+v", got.ProtectedPaths)
+	}
+	if got.MaxSteps != 120 {
+		t.Fatalf("round-trip perdió max_steps: %d", got.MaxSteps)
 	}
 }
 

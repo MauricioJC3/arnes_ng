@@ -13,7 +13,7 @@ type adaptedTool struct {
 	name   string
 }
 
-func (t adaptedTool) Name() string       { return t.name }
+func (t adaptedTool) Name() string        { return t.name }
 func (t adaptedTool) Description() string { return t.info.Description }
 
 func (t adaptedTool) InputSchema() map[string]any {

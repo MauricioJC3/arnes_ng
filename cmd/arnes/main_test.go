@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/MauricioJC3/arnes_ng/internal/config"
 	"github.com/MauricioJC3/arnes_ng/internal/provider"
 )
 
@@ -58,6 +59,39 @@ func TestCompactionFromEnv(t *testing.T) {
 		t.Setenv("ARNES_COMPACT", "summarize")
 		t.Setenv("ARNES_COMPACT_AT", "muchos")
 		if _, _, err := compactionFromEnv(provider.NewMock()); err == nil {
+			t.Fatal("esperaba error")
+		}
+	})
+}
+
+func TestMaxStepsFromEnv(t *testing.T) {
+	t.Run("nada seteado devuelve 0 (el app pone el default)", func(t *testing.T) {
+		t.Setenv("ARNES_MAX_STEPS", "")
+		n, err := maxStepsFromEnv(config.Config{})
+		if err != nil || n != 0 {
+			t.Fatalf("n=%d err=%v", n, err)
+		}
+	})
+
+	t.Run("el env gana sobre la config", func(t *testing.T) {
+		t.Setenv("ARNES_MAX_STEPS", "200")
+		n, err := maxStepsFromEnv(config.Config{MaxSteps: 30})
+		if err != nil || n != 200 {
+			t.Fatalf("n=%d err=%v", n, err)
+		}
+	})
+
+	t.Run("sin env cae a la config", func(t *testing.T) {
+		t.Setenv("ARNES_MAX_STEPS", "")
+		n, err := maxStepsFromEnv(config.Config{MaxSteps: 30})
+		if err != nil || n != 30 {
+			t.Fatalf("n=%d err=%v", n, err)
+		}
+	})
+
+	t.Run("valor inválido es error", func(t *testing.T) {
+		t.Setenv("ARNES_MAX_STEPS", "un montón")
+		if _, err := maxStepsFromEnv(config.Config{}); err == nil {
 			t.Fatal("esperaba error")
 		}
 	})

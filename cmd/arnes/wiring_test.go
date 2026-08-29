@@ -113,4 +113,3 @@ func TestNewTodoBridgeKeepsOnlyTheLatestSnapshot(t *testing.T) {
 	default:
 	}
 }
-

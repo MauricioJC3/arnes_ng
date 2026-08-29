@@ -156,10 +156,11 @@ func TestAgentRun(t *testing.T) {
 		}
 	})
 
-	t.Run("corta al llegar al límite de pasos", func(t *testing.T) {
+	t.Run("corta al llegar al límite de pasos y devuelve el texto parcial", func(t *testing.T) {
 		p := &provider.MockProvider{}
 		p.Handler = func(provider.Request) (provider.Response, error) {
 			return provider.Response{
+				Text:       "voy por acá...",
 				ToolCalls:  []provider.ToolCall{{ID: "c", Name: "echo", Input: json.RawMessage(`{}`)}},
 				StopReason: provider.StopToolUse,
 			}, nil
@@ -167,8 +168,12 @@ func TestAgentRun(t *testing.T) {
 		ft := &fakeTool{name: "echo", out: "eco"}
 		a := New(p, tool.NewRegistry(ft), approval.AllowAll{}, WithMaxSteps(3))
 
-		if _, err := a.Run(ctx, "loop infinito"); err == nil {
+		out, err := a.Run(ctx, "loop infinito")
+		if err == nil {
 			t.Fatal("esperaba error por límite de pasos, no hubo")
+		}
+		if out != "voy por acá..." {
+			t.Fatalf("texto parcial = %q, quiero el último texto del modelo", out)
 		}
 		if ft.calls != 3 {
 			t.Fatalf("ejecuciones = %d, quiero 3 (una por paso)", ft.calls)

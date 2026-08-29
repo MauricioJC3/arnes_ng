@@ -9,6 +9,7 @@
 //	ARNES_RESUME        session id (or unique prefix) to resume on start
 //	ARNES_COMPACT       auto-compaction: off (default) | sliding | summarize
 //	ARNES_COMPACT_AT    token threshold for auto-compaction (default 120000)
+//	ARNES_MAX_STEPS     tool round-trips allowed per turn (default 50)
 //	ARNES_SUBAGENTS     path to a subagents JSON file (default ~/.arnes/subagents.json)
 //	ARNES_SKILLS        path to the global skills directory (default ~/.arnes/skills)
 //	ARNES_MCP           path to an mcp.json file (default ~/.arnes/mcp.json)
@@ -124,6 +125,13 @@ func run() error {
 		return err
 	}
 
+	// Per-turn tool-step budget: ARNES_MAX_STEPS wins over the config; 0 lets the
+	// app apply agent.DefaultMaxSteps.
+	maxSteps, err := maxStepsFromEnv(cfg)
+	if err != nil {
+		return err
+	}
+
 	// A once-a-day background check for a newer release. It never blocks startup;
 	// the result (if any) is surfaced on notices.
 	notices := make(chan string, 1)
@@ -181,6 +189,7 @@ func run() error {
 		Mode:          startMode,
 		AutoCompactor: autoCompactor,
 		CompactAt:     compactAt,
+		MaxSteps:      maxSteps,
 		Streaming:     streaming,
 		Deltas:        deltas,
 		Checkpoints:   checkpoint.NewStore(),

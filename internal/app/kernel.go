@@ -21,6 +21,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
@@ -51,6 +52,7 @@ type Deps struct {
 	Mode          string
 	AutoCompactor compact.Strategy
 	CompactAt     int
+	MaxSteps      int // tool round-trips per turn; <=0 uses agent.DefaultMaxSteps
 	Streaming     bool
 	Deltas        chan string
 	Hooks         agent.Hooks       // pre/post tool-call hooks; nil when none configured
@@ -77,6 +79,7 @@ type App struct {
 	subagents     *subagent.Registry
 	autoCompactor compact.Strategy
 	compactAt     int
+	maxSteps      int
 	streaming     bool
 	deltas        chan string
 	hooks         agent.Hooks
@@ -105,6 +108,7 @@ func New(d Deps) *App {
 		mode:          d.Mode,
 		autoCompactor: d.AutoCompactor,
 		compactAt:     d.CompactAt,
+		maxSteps:      cmp.Or(d.MaxSteps, agent.DefaultMaxSteps),
 		streaming:     d.Streaming,
 		deltas:        d.Deltas,
 		hooks:         d.Hooks,
@@ -164,6 +168,9 @@ func (a *App) agentOptions() []agent.Option {
 	opts := []agent.Option{
 		agent.WithSystem(a.buildSystem()),
 		agent.WithWarnFn(func(err error) { fmt.Fprintln(os.Stderr, "arnés:", err) }),
+	}
+	if a.maxSteps > 0 {
+		opts = append(opts, agent.WithMaxSteps(a.maxSteps))
 	}
 	if a.hooks != nil {
 		opts = append(opts, agent.WithHooks(a.hooks))
