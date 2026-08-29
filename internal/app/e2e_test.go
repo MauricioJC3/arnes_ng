@@ -135,9 +135,12 @@ func jsonStr(s string) string {
 	return b.String()
 }
 
-// newStreamingApp is newIntegrationApp with streaming on, a delta sink, and a
-// real openai_compat provider pointed at baseURL.
-func newStreamingApp(t *testing.T, baseURL string) (*App, *[]string, *sync.Mutex) {
+// newStreamingApp is newIntegrationApp with streaming on, a delta channel, and a
+// real openai_compat provider pointed at baseURL. The delta channel is buffered
+// large and NOT drained concurrently -- the agent fills it synchronously during
+// the stream, and the test drains it with drainDeltas() after Run returns, so
+// the assertion never races the sink.
+func newStreamingApp(t *testing.T, baseURL string) (*App, chan string) {
 	t.Helper()
 	dir := t.TempDir()
 	store, err := session.NewFileStore(dir)
@@ -158,17 +161,7 @@ func newStreamingApp(t *testing.T, baseURL string) (*App, *[]string, *sync.Mutex
 		BaseURL: baseURL, APIKey: "test-key", Model: "test-model",
 	})
 
-	deltas := make(chan string, 256)
-	var mu sync.Mutex
-	var got []string
-	go func() {
-		for d := range deltas {
-			mu.Lock()
-			got = append(got, d)
-			mu.Unlock()
-		}
-	}()
-
+	deltas := make(chan string, 4096)
 	a := &App{
 		providerName: "openai_compat",
 		prov:         prov,
@@ -185,8 +178,18 @@ func newStreamingApp(t *testing.T, baseURL string) (*App, *[]string, *sync.Mutex
 		maxSteps:     agent.DefaultMaxSteps,
 		maxTokens:    agent.DefaultMaxTokens,
 	}
-	t.Cleanup(func() { close(deltas) })
-	return a, &got, &mu
+	return a, deltas
+}
+
+// drainDeltas closes ch and returns everything buffered on it, concatenated.
+// Call it once, after the Run(s) whose streamed output you want to inspect.
+func drainDeltas(ch chan string) string {
+	close(ch)
+	var b strings.Builder
+	for d := range ch {
+		b.WriteString(d)
+	}
+	return b.String()
 }
 
 // TestE2EStreamingToolTurnPersistsAndResumes: a full two-round streaming turn
@@ -203,7 +206,7 @@ func TestE2EStreamingToolTurnPersistsAndResumes(t *testing.T) {
 		[]ocTurn{{frames: toolCallFrames("Voy a crear el archivo. ", "call_1", "write_file", args)}},
 		[]ocTurn{{frames: textFrames("Listo, archivo creado.")}},
 	)
-	a, deltas, dmu := newStreamingApp(t, oc.srv.URL)
+	a, deltas := newStreamingApp(t, oc.srv.URL)
 	if _, err := a.NewSession(); err != nil {
 		t.Fatal(err)
 	}
@@ -219,9 +222,7 @@ func TestE2EStreamingToolTurnPersistsAndResumes(t *testing.T) {
 		t.Fatalf("texto final = %q", out)
 	}
 	// 2. streaming deltas actually arrived (both rounds)
-	dmu.Lock()
-	joined := strings.Join(*deltas, "")
-	dmu.Unlock()
+	joined := drainDeltas(deltas)
 	if !strings.Contains(joined, "Voy a crear el archivo.") || !strings.Contains(joined, "Listo, archivo creado.") {
 		t.Fatalf("deltas incompletos: %q", joined)
 	}
@@ -238,7 +239,7 @@ func TestE2EStreamingToolTurnPersistsAndResumes(t *testing.T) {
 		t.Fatalf("SessionUsage = %d/%d, quiero 50/20", in, outTok)
 	}
 	// 6. persisted, and a fresh app resumes the full history
-	a2, _, _ := newStreamingApp(t, oc.srv.URL)
+	a2, _ := newStreamingApp(t, oc.srv.URL)
 	// share the same store dir as a
 	a2.store = a.store
 	if _, err := a2.ResumeSession(sessID); err != nil {
@@ -268,7 +269,7 @@ func TestE2EStreamRetriesA500MidConversation(t *testing.T) {
 			{frames: textFrames("recuperado")},
 		},
 	)
-	a, _, _ := newStreamingApp(t, oc.srv.URL)
+	a, _ := newStreamingApp(t, oc.srv.URL)
 	if _, err := a.NewSession(); err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +295,7 @@ func TestE2ECancelMidStreamKeepsPartial(t *testing.T) {
 	oc := newOCServer(t,
 		[]ocTurn{{frames: textFrames("no llego a terminar"), delay: 300 * time.Millisecond}},
 	)
-	a, _, _ := newStreamingApp(t, oc.srv.URL)
+	a, _ := newStreamingApp(t, oc.srv.URL)
 	if _, err := a.NewSession(); err != nil {
 		t.Fatal(err)
 	}
