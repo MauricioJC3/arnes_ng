@@ -3,6 +3,7 @@ package repl
 import (
 	"bufio"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -55,6 +56,20 @@ func (f *fakeApp) Compact() (string, error) {
 }
 
 func (f *fakeApp) ListSubagents() []string { return []string{"research: explora", "test-writer: testea"} }
+
+// fakeFreshApp is a Conversation that also implements FreshFactory, so /goal
+// --fresh gets a new conversation per iteration.
+type fakeFreshApp struct {
+	fakeConv
+	fresh *fakeConv
+}
+
+func (f *fakeFreshApp) FreshConversation() command.Conversation {
+	if f.fresh == nil {
+		f.fresh = &fakeConv{reply: "listo\n" + "ARNES_GOAL_DONE"}
+	}
+	return f.fresh
+}
 
 func run(t *testing.T, script string, conv command.Conversation, p provider.Provider) string {
 	t.Helper()
@@ -113,7 +128,28 @@ func TestREPL(t *testing.T) {
 			t.Fatalf("no avisó del comando inválido:\n%s", out)
 		}
 	})
+
+	t.Run("un error de la conversación se reporta y el REPL sigue", func(t *testing.T) {
+		conv := &fakeConv{err: errors.New("se cayó el provider")}
+		out := run(t, "hola\n/exit\n", conv, provider.NewMock())
+		if !strings.Contains(out, "error: se cayó el provider") {
+			t.Fatalf("no reportó el error de la conversación:\n%s", out)
+		}
+	})
+
+	t.Run("un error de lectura (no EOF) corta el loop", func(t *testing.T) {
+		var out strings.Builder
+		r := New(&fakeConv{}, provider.NewMock(), bufio.NewReader(errReader{}), &out)
+		if err := r.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "disco") {
+			t.Fatalf("Run debería devolver el error de lectura, dio %v", err)
+		}
+	})
 }
+
+// errReader fails every Read with a non-EOF error.
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("falló el disco") }
 
 func TestREPLSessionCommands(t *testing.T) {
 	t.Run("/sessions lista cuando la conversación lo soporta", func(t *testing.T) {
@@ -204,6 +240,55 @@ func TestREPLSubagents(t *testing.T) {
 		out := run(t, "/subagents\n/exit\n", &fakeConv{}, provider.NewMock())
 		if !strings.Contains(out, "no tiene subagentes") {
 			t.Fatalf("out:\n%s", out)
+		}
+	})
+}
+
+func TestREPLGoal(t *testing.T) {
+	t.Run("corre hasta el sentinel e imprime progreso y resumen", func(t *testing.T) {
+		conv := &fakeConv{reply: "trabajo hecho\n" + "ARNES_GOAL_DONE"}
+		out := run(t, "/goal 3 arreglá el parser\n/exit\n", conv, provider.NewMock())
+		if len(conv.inputs) != 1 {
+			t.Fatalf("el sentinel debería cortar en la 1ª iteración, hubo %d", len(conv.inputs))
+		}
+		if !strings.Contains(out, "— iteración 1/3 —") {
+			t.Fatalf("no imprimió el progreso:\n%s", out)
+		}
+		if !strings.Contains(out, "objetivo: completado") {
+			t.Fatalf("no imprimió el resumen del goal:\n%s", out)
+		}
+	})
+
+	t.Run("--fresh usa una conversación nueva, no la viva", func(t *testing.T) {
+		app := &fakeFreshApp{}
+		out := run(t, "/goal --fresh dale\n/exit\n", app, provider.NewMock())
+		if len(app.fakeConv.inputs) != 0 {
+			t.Fatalf("la conversación viva no debería usarse con --fresh: %v", app.fakeConv.inputs)
+		}
+		if app.fresh == nil || len(app.fresh.inputs) != 1 {
+			t.Fatalf("la conversación fresca no recibió el turno")
+		}
+		if !strings.Contains(out, "objetivo: completado") {
+			t.Fatalf("out:\n%s", out)
+		}
+	})
+
+	t.Run("--fresh sin FreshFactory cae a la conversación viva", func(t *testing.T) {
+		conv := &fakeConv{reply: "x\n" + "ARNES_GOAL_DONE"}
+		run(t, "/goal --fresh probando\n/exit\n", conv, provider.NewMock())
+		if len(conv.inputs) != 1 {
+			t.Fatalf("sin FreshFactory debería usar la conv viva: %v", conv.inputs)
+		}
+	})
+
+	t.Run("un error del loop se reporta y el REPL sigue", func(t *testing.T) {
+		conv := &fakeConv{reply: "boom", err: errors.New("falló el turno")}
+		out := run(t, "/goal 2 hacé algo\n/exit\n", conv, provider.NewMock())
+		if !strings.Contains(out, "error: falló el turno") {
+			t.Fatalf("no reportó el error del goal:\n%s", out)
+		}
+		if !strings.Contains(out, "objetivo: error") {
+			t.Fatalf("no imprimió el resumen tras el error:\n%s", out)
 		}
 	})
 }
