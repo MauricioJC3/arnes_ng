@@ -232,7 +232,7 @@ func retryAfter(resp *http.Response) time.Duration {
 func (o *OpenAICompat) SendMessage(ctx context.Context, req Request) (Response, error) {
 	maxTokens := req.MaxTokens
 	if maxTokens <= 0 {
-		maxTokens = 4096
+		maxTokens = 8192
 	}
 	payload := ocChatRequest{
 		Model:     o.model,
@@ -248,27 +248,45 @@ func (o *OpenAICompat) SendMessage(ctx context.Context, req Request) (Response, 
 		return Response{}, err
 	}
 
-	httpResp, err := o.post(ctx, body, "")
-	if err != nil {
-		return Response{}, err
-	}
-	defer httpResp.Body.Close()
-
-	raw, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		return Response{}, fmt.Errorf("openai_compat: no se pudo leer la respuesta: %w", err)
+	// A flaky gateway (free tiers especially) can answer 2xx with an HTML error
+	// page instead of JSON. post() only retries 429/5xx, so retry the
+	// non-JSON-body case here a couple of times before giving up.
+	var raw []byte
+	var status int
+	for attempt := 0; attempt < retryAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-time.After(backoff(attempt)):
+			case <-ctx.Done():
+				return Response{}, ctx.Err()
+			}
+		}
+		httpResp, postErr := o.post(ctx, body, "")
+		if postErr != nil {
+			return Response{}, postErr
+		}
+		raw, err = io.ReadAll(httpResp.Body)
+		httpResp.Body.Close()
+		if err != nil {
+			return Response{}, fmt.Errorf("openai_compat: no se pudo leer la respuesta: %w", err)
+		}
+		status = httpResp.StatusCode
+		if status < 400 && !looksLikeJSON(raw) {
+			continue // transient gateway page; retry
+		}
+		break
 	}
 
 	var parsed ocChatResponse
 	if jsonErr := json.Unmarshal(raw, &parsed); jsonErr != nil {
-		return Response{}, fmt.Errorf("openai_compat: respuesta ilegible (HTTP %d): %s", httpResp.StatusCode, truncate(raw, 300))
+		return Response{}, fmt.Errorf("openai_compat: respuesta ilegible (HTTP %d): %s", status, truncate(raw, 300))
 	}
-	if httpResp.StatusCode >= 400 {
+	if status >= 400 {
 		msg := string(truncate(raw, 300))
 		if parsed.Error != nil && parsed.Error.Message != "" {
 			msg = parsed.Error.Message
 		}
-		return Response{}, fmt.Errorf("openai_compat: HTTP %d: %s", httpResp.StatusCode, msg)
+		return Response{}, fmt.Errorf("openai_compat: HTTP %d: %s", status, msg)
 	}
 	if len(parsed.Choices) == 0 {
 		return Response{}, fmt.Errorf("openai_compat: la respuesta no trae choices")
@@ -407,6 +425,7 @@ func parseOCStream(body io.Reader, onDelta func(string)) (Response, error) {
 		resp.ToolCalls = append(resp.ToolCalls, ToolCall{ID: acc.id, Name: acc.name, Input: json.RawMessage(args)})
 	}
 	resp.StopReason = mapOCFinishReason(finish)
+	dropTruncatedToolCall(&resp, finish)
 	if len(resp.ToolCalls) > 0 {
 		resp.StopReason = StopToolUse
 	}
@@ -556,11 +575,29 @@ func fromOCResponse(r ocChatResponse) Response {
 			Input: json.RawMessage(args),
 		})
 	}
+	dropTruncatedToolCall(&resp, choice.FinishReason)
 	// Invariant for the agent loop: tool calls always mean "run the tools".
 	if len(resp.ToolCalls) > 0 {
 		resp.StopReason = StopToolUse
 	}
 	return resp
+}
+
+// dropTruncatedToolCall handles a completion cut off mid tool call: on a
+// "length" finish the last tool call's JSON arguments are chopped, so running it
+// only feeds the model a parse error it retries into. Drop that call and let the
+// turn stay a max-tokens stop, so the agent nudges the model to go smaller
+// instead of dispatching a broken call.
+func dropTruncatedToolCall(resp *Response, finishReason string) {
+	if finishReason != "length" || len(resp.ToolCalls) == 0 {
+		return
+	}
+	if last := resp.ToolCalls[len(resp.ToolCalls)-1]; !json.Valid(last.Input) {
+		resp.ToolCalls = resp.ToolCalls[:len(resp.ToolCalls)-1]
+	}
+	if len(resp.ToolCalls) == 0 {
+		resp.StopReason = StopMaxTokens
+	}
 }
 
 func mapOCFinishReason(fr string) StopReason {
@@ -579,4 +616,11 @@ func truncate(b []byte, n int) []byte {
 		return b
 	}
 	return b[:n]
+}
+
+// looksLikeJSON reports whether b plausibly starts a JSON document -- enough to
+// tell a real chat-completions reply from a gateway's HTML error page.
+func looksLikeJSON(b []byte) bool {
+	b = bytes.TrimSpace(b)
+	return len(b) > 0 && (b[0] == '{' || b[0] == '[')
 }

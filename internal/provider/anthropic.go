@@ -205,6 +205,7 @@ func asStringSlice(v any) []string {
 // fromMessage normalizes an SDK Message into a Response.
 func fromMessage(msg *anthropic.Message) Response {
 	var resp Response
+	lastToolInputEmpty := false
 	for _, block := range msg.Content {
 		switch b := block.AsAny().(type) {
 		case anthropic.TextBlock:
@@ -214,6 +215,7 @@ func fromMessage(msg *anthropic.Message) Response {
 			// Input; an empty json.RawMessage is invalid JSON and breaks both the
 			// tool and session persistence. Normalize it to an empty object.
 			input := json.RawMessage(b.Input)
+			lastToolInputEmpty = len(input) == 0
 			if len(input) == 0 {
 				input = json.RawMessage("{}")
 			}
@@ -225,6 +227,12 @@ func fromMessage(msg *anthropic.Message) Response {
 		}
 	}
 	resp.StopReason = mapStopReason(msg.StopReason)
+	// A tool call cut off by the token limit (empty arguments on a max_tokens
+	// stop) is not runnable: drop it so the agent treats the turn as truncated
+	// and nudges the model to continue, instead of dispatching a bad call.
+	if resp.StopReason == StopMaxTokens && lastToolInputEmpty && len(resp.ToolCalls) > 0 {
+		resp.ToolCalls = resp.ToolCalls[:len(resp.ToolCalls)-1]
+	}
 	// Invariant for the agent loop: tool calls always mean "run the tools".
 	if len(resp.ToolCalls) > 0 {
 		resp.StopReason = StopToolUse
