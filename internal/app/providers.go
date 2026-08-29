@@ -20,6 +20,8 @@ var ProviderKeyEnv = map[string]string{
 	"deepseek":  "DEEPSEEK_API_KEY",
 	"kimi":      "MOONSHOT_API_KEY",
 	"openai":    "OPENAI_API_KEY",
+	"nvidia":    "NVIDIA_API_KEY",
+	"opencode":  "OPENCODE_API_KEY",
 }
 
 // Connect implements command.Connector: switch provider (and optionally model /
@@ -27,7 +29,7 @@ var ProviderKeyEnv = map[string]string{
 func (a *App) Connect(providerName, model, apiKey string) (string, error) {
 	providerName = strings.ToLower(strings.TrimSpace(providerName))
 	if _, ok := ProviderKeyEnv[providerName]; !ok {
-		return "", fmt.Errorf("provider desconocido: %q (anthropic|deepseek|kimi|openai)", providerName)
+		return "", fmt.Errorf("provider desconocido: %q (anthropic|deepseek|kimi|openai|nvidia|opencode)", providerName)
 	}
 
 	next := a.cfg.Clone()
@@ -135,8 +137,12 @@ func ProviderFromConfig(cfg config.Config) (provider.Provider, string, error) {
 		return provider.NewKimi(key("kimi"), cmp.Or(model, "moonshot-v1-8k")), name, nil
 	case "openai":
 		return provider.NewOpenAI(key("openai"), cmp.Or(model, "gpt-4o")), name, nil
+	case "nvidia":
+		return provider.NewNVIDIA(key("nvidia"), cmp.Or(model, "qwen/qwen2.5-coder-32b-instruct")), name, nil
+	case "opencode":
+		return provider.NewOpenCode(key("opencode"), cmp.Or(model, "nemotron-3-ultra-free")), name, nil
 	default:
-		return nil, "", fmt.Errorf("provider desconocido: %q (anthropic|deepseek|kimi|openai)", name)
+		return nil, "", fmt.Errorf("provider desconocido: %q (anthropic|deepseek|kimi|openai|nvidia|opencode)", name)
 	}
 }
 

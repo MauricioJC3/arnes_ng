@@ -290,6 +290,8 @@ func TestOpenAICompatConstructors(t *testing.T) {
 		{"deepseek", NewDeepSeek("k", "deepseek-chat"), DeepSeekBaseURL},
 		{"kimi", NewKimi("k", "kimi-k2"), KimiBaseURL},
 		{"openai", NewOpenAI("k", "gpt-4o"), OpenAIBaseURL},
+		{"nvidia", NewNVIDIA("k", "qwen/qwen2.5-coder-32b-instruct"), NVIDIABaseURL},
+		{"opencode", NewOpenCode("k", "nemotron-3-ultra-free"), OpenCodeBaseURL},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

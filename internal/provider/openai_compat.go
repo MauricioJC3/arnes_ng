@@ -20,6 +20,14 @@ const (
 	DeepSeekBaseURL = "https://api.deepseek.com/v1"
 	KimiBaseURL     = "https://api.moonshot.ai/v1"
 	OpenAIBaseURL   = "https://api.openai.com/v1"
+	// NVIDIABaseURL is NVIDIA's hosted NIM catalog (build.nvidia.com). It speaks
+	// the OpenAI Chat Completions API and, at time of writing, serves its models
+	// on a free tier -- an nvapi- key from build.nvidia.com, low rate limits.
+	NVIDIABaseURL = "https://integrate.api.nvidia.com/v1"
+	// OpenCodeBaseURL is the opencode zen gateway's OpenAI-compatible path. Its
+	// *-free models cost nothing (response `cost: "0"`) and work without a card
+	// on file, but the free tier rate-limits hard (429 FreeUsageLimitError).
+	OpenCodeBaseURL = "https://opencode.ai/zen/v1"
 )
 
 // OpenAICompat talks to any service that implements the OpenAI Chat Completions
@@ -68,6 +76,14 @@ func NewKimi(apiKey, model string) *OpenAICompat {
 
 func NewOpenAI(apiKey, model string) *OpenAICompat {
 	return NewOpenAICompat(OpenAICompatConfig{BaseURL: OpenAIBaseURL, APIKey: apiKey, Model: model})
+}
+
+func NewNVIDIA(apiKey, model string) *OpenAICompat {
+	return NewOpenAICompat(OpenAICompatConfig{BaseURL: NVIDIABaseURL, APIKey: apiKey, Model: model})
+}
+
+func NewOpenCode(apiKey, model string) *OpenAICompat {
+	return NewOpenAICompat(OpenAICompatConfig{BaseURL: OpenCodeBaseURL, APIKey: apiKey, Model: model})
 }
 
 func (o *OpenAICompat) Model() string { return o.model }

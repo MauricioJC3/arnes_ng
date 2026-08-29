@@ -367,6 +367,20 @@ func TestProviderFromConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("nvidia sin modelo usa un default no vacío", func(t *testing.T) {
+		p, name, err := ProviderFromConfig(config.Config{Provider: "nvidia"})
+		if err != nil || name != "nvidia" || p.Model() == "" {
+			t.Fatalf("name=%q model=%q err=%v", name, p.Model(), err)
+		}
+	})
+
+	t.Run("opencode sin modelo usa un default no vacío", func(t *testing.T) {
+		p, name, err := ProviderFromConfig(config.Config{Provider: "opencode"})
+		if err != nil || name != "opencode" || p.Model() == "" {
+			t.Fatalf("name=%q model=%q err=%v", name, p.Model(), err)
+		}
+	})
+
 	t.Run("provider desconocido es error", func(t *testing.T) {
 		if _, _, err := ProviderFromConfig(config.Config{Provider: "gemini"}); err == nil {
 			t.Fatal("esperaba error")

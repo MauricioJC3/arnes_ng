@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var connectProviders = []string{"anthropic", "deepseek", "kimi", "openai"}
+var connectProviders = []string{"anthropic", "deepseek", "kimi", "openai", "nvidia", "opencode"}
 
 // connectModels is the offline fallback used when the live /models lookup fails
 // (no network, bad key, provider without the capability). Kept short on purpose.
@@ -18,6 +18,20 @@ var connectModels = map[string][]string{
 	"deepseek":  {"deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"},
 	"kimi":      {"kimi-k2", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"},
 	"openai":    {"gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"},
+	"nvidia": {
+		"qwen/qwen2.5-coder-32b-instruct",
+		"nvidia/llama-3.3-nemotron-super-49b-v1",
+		"meta/llama-3.3-70b-instruct",
+		"deepseek-ai/deepseek-r1",
+		"moonshotai/kimi-k2-instruct",
+	},
+	"opencode": {
+		"nemotron-3-ultra-free",
+		"nemotron-3.5-lightning-free",
+		"mimo-v2.5-free",
+		"ling-3.0-flash-fin-free",
+		"laguna-s-2.1-free",
+	},
 }
 
 const manualModelOption = "✎ escribir a mano…"

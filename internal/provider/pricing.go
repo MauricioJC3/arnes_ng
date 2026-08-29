@@ -31,6 +31,24 @@ var priceTable = map[string][2]float64{
 	"gpt-4o-mini":  {0.15, 0.60},
 	"gpt-4.1":      {2.00, 8.00},
 	"gpt-4.1-mini": {0.40, 1.60},
+
+	// NVIDIA NIM (build.nvidia.com) -- free hosted tier, so the cost bar reads
+	// $0.00. Drop these entries if NVIDIA starts billing the hosted catalog.
+	"qwen/qwen2.5-coder-32b-instruct":        {0, 0},
+	"nvidia/llama-3.3-nemotron-super-49b-v1": {0, 0},
+	"meta/llama-3.3-70b-instruct":            {0, 0},
+	"deepseek-ai/deepseek-r1":                {0, 0},
+	"moonshotai/kimi-k2-instruct":            {0, 0},
+
+	// opencode zen *-free models -- API responds `cost: "0"`.
+	"nemotron-3-ultra-free":           {0, 0},
+	"nemotron-3.5-lightning-free":     {0, 0},
+	"mimo-v2.5-free":                  {0, 0},
+	"ling-3.0-flash-fin-free":         {0, 0},
+	"laguna-s-2.1-free":               {0, 0},
+	"hy3-free":                        {0, 0},
+	"muse-spark-1.2-contributor-free": {0, 0},
+	"deepseek-v4-flash-free":          {0, 0},
 }
 
 // Price returns the USD-per-million-tokens rates for a model. ok is false when

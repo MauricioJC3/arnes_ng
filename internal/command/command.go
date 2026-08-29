@@ -159,7 +159,7 @@ func Dispatch(line string, conv Conversation, prov provider.Provider) (Result, e
 			return Result{}, errors.New("este arnés no soporta /connect")
 		}
 		if len(fields) < 2 {
-			return Result{}, errors.New("uso: /connect <provider> [modelo] [api-key]  (provider: anthropic|deepseek|kimi|openai)")
+			return Result{}, errors.New("uso: /connect <provider> [modelo] [api-key]  (provider: anthropic|deepseek|kimi|openai|nvidia|opencode)")
 		}
 		model, key := "", ""
 		if len(fields) >= 3 {
