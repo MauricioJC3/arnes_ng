@@ -109,7 +109,11 @@ func (a *Anthropic) toParams(req Request) (anthropic.MessageNewParams, error) {
 		case RoleUser:
 			msgs = append(msgs, anthropic.NewUserMessage(userBlocks(m)...))
 		case RoleAssistant:
-			msgs = append(msgs, anthropic.NewAssistantMessage(assistantBlocks(m)...))
+			blocks := assistantBlocks(m)
+			if len(blocks) == 0 {
+				continue // empty assistant turn -- the API would reject it
+			}
+			msgs = append(msgs, anthropic.NewAssistantMessage(blocks...))
 		default:
 			return anthropic.MessageNewParams{}, fmt.Errorf("anthropic: rol de mensaje desconocido %q", m.Role)
 		}

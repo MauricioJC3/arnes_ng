@@ -386,9 +386,13 @@ func (o *OpenAICompat) StreamMessage(ctx context.Context, req Request, onDelta f
 	sr := newStallReader(httpResp.Body, streamIdleTimeout, trip)
 	defer sr.Stop()
 	resp, err := parseOCStream(sr, onDelta)
-	if err != nil && stalled.Load() {
-		return Response{}, fmt.Errorf("openai_compat: el stream se cortó, no llegaron datos nuevos en %s "+
-			"(el modelo o el proveedor dejó de responder) -- reintentá o cambiá de modelo con /connect", streamIdleTimeout)
+	if err != nil {
+		if stalled.Load() {
+			return Response{}, fmt.Errorf("openai_compat: el stream se cortó, no llegaron datos nuevos en %s "+
+				"(el modelo o el proveedor dejó de responder) -- reintentá o cambiá de modelo con /connect", streamIdleTimeout)
+		}
+		// A mid-stream network drop (connection reset, EOF) can't be resumed.
+		return Response{}, fmt.Errorf("%w -- el proveedor cortó el stream a mitad de la respuesta; reintentá o cambiá de modelo con /connect", err)
 	}
 	return resp, err
 }
@@ -624,6 +628,12 @@ func toOCMessages(req Request) []ocMessage {
 					Type:     "function",
 					Function: ocFunctionCall{Name: tc.Name, Arguments: string(tc.Input)},
 				})
+			}
+			// Drop an assistant turn that carries nothing: the API rejects
+			// {"role":"assistant","content":null} with no tool_calls, and once
+			// such a message is in a persisted session every later call fails.
+			if am.Content == nil && len(am.ToolCalls) == 0 {
+				continue
 			}
 			msgs = append(msgs, am)
 		}

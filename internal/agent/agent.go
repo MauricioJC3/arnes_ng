@@ -241,11 +241,18 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 		for i, c := range resp.ToolCalls {
 			malformed[i] = !json.Valid(c.Input)
 		}
-		a.history = append(a.history, provider.Message{
-			Role:      provider.RoleAssistant,
-			Text:      resp.Text,
-			ToolCalls: normalizeToolCalls(resp.ToolCalls),
-		})
+		// Only record the assistant turn when it carries something. An empty
+		// response (a stream cut before any token, a "length" stop with no text)
+		// would serialize as {"role":"assistant","content":null} with no
+		// tool_calls -- which the OpenAI API rejects on the NEXT call, poisoning
+		// the whole session.
+		if resp.Text != "" || len(resp.ToolCalls) > 0 {
+			a.history = append(a.history, provider.Message{
+				Role:      provider.RoleAssistant,
+				Text:      resp.Text,
+				ToolCalls: normalizeToolCalls(resp.ToolCalls),
+			})
+		}
 
 		// The model's output was cut by the token limit with no tool call to run.
 		// Nudge it to continue (or split the work) a couple of times, then stop

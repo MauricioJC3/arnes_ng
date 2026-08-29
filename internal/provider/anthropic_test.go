@@ -75,6 +75,21 @@ func TestAnthropicToParamsRejectsUnknownRole(t *testing.T) {
 	}
 }
 
+func TestAnthropicToParamsDropsEmptyAssistant(t *testing.T) {
+	a := NewAnthropic()
+	params, err := a.toParams(Request{Messages: []Message{
+		{Role: RoleUser, Text: "hacé unos cambios"},
+		{Role: RoleAssistant}, // poisoned: no text, no tool calls
+		{Role: RoleUser, Text: "sigue"},
+	}})
+	if err != nil {
+		t.Fatalf("toParams: %v", err)
+	}
+	if len(params.Messages) != 2 {
+		t.Fatalf("esperaba 2 mensajes (el assistant vacío se descarta), tengo %d", len(params.Messages))
+	}
+}
+
 func TestFromMessageNormalizesContent(t *testing.T) {
 	fixture := `{
 		"id": "msg_1",

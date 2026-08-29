@@ -312,6 +312,33 @@ func TestAgentRun(t *testing.T) {
 		}
 	})
 
+	t.Run("una respuesta vacía NO deja un assistant vacío en el historial", func(t *testing.T) {
+		var n int
+		p := &provider.MockProvider{}
+		p.Handler = func(provider.Request) (provider.Response, error) {
+			n++
+			if n == 1 {
+				// respuesta cortada por tokens SIN texto ni tool calls
+				return provider.Response{StopReason: provider.StopMaxTokens}, nil
+			}
+			return provider.Response{Text: "ahora sí", StopReason: provider.StopEndTurn}, nil
+		}
+		a := New(p, tool.NewRegistry(), approval.AllowAll{}, WithMaxSteps(5))
+
+		out, err := a.Run(ctx, "hacé algo")
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if out != "ahora sí" {
+			t.Fatalf("out = %q", out)
+		}
+		for i, m := range a.History() {
+			if m.Role == provider.RoleAssistant && m.Text == "" && len(m.ToolCalls) == 0 {
+				t.Fatalf("historial[%d] es un assistant vacío -- envenena la sesión: %+v", i, a.History())
+			}
+		}
+	})
+
 	t.Run("cortes por tokens repetidos: se rinde con IncompleteError", func(t *testing.T) {
 		p := &provider.MockProvider{}
 		p.Handler = func(provider.Request) (provider.Response, error) {

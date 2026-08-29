@@ -193,6 +193,46 @@ func TestOpenAICompatSendsContentOnEveryMessage(t *testing.T) {
 	}
 }
 
+// A persisted session can carry an assistant message with neither text nor tool
+// calls (a stream cut before any token, a "length" stop with no content). The
+// API rejects {"role":"assistant","content":null} with no tool_calls and every
+// later call then fails, so toOCMessages must drop it.
+func TestOpenAICompatDropsEmptyAssistantMessage(t *testing.T) {
+	var rawBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rawBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}],"usage":{}}`)
+	}))
+	t.Cleanup(srv.Close)
+	oc := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, APIKey: "k", Model: "x"})
+
+	_, err := oc.SendMessage(context.Background(), Request{
+		Messages: []Message{
+			{Role: RoleUser, Text: "hacé unos cambios"},
+			{Role: RoleAssistant}, // poisoned: no text, no tool calls
+			{Role: RoleUser, Text: "sigue"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	var payload struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(rawBody, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Messages) != 2 {
+		t.Fatalf("esperaba 2 mensajes (el assistant vacío se descarta), tengo %d: %s", len(payload.Messages), rawBody)
+	}
+	for _, m := range payload.Messages {
+		if m["role"] == "assistant" {
+			t.Fatalf("el assistant vacío no se descartó: %s", rawBody)
+		}
+	}
+}
+
 func TestOpenAICompatHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
