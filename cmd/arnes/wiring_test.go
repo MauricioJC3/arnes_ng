@@ -8,10 +8,7 @@ import (
 	"time"
 
 	"github.com/MauricioJC3/arnes_ng/internal/config"
-	"github.com/MauricioJC3/arnes_ng/internal/lsp"
-	"github.com/MauricioJC3/arnes_ng/internal/memory"
 	"github.com/MauricioJC3/arnes_ng/internal/provider"
-	"github.com/MauricioJC3/arnes_ng/internal/skill"
 	"github.com/MauricioJC3/arnes_ng/internal/todo"
 )
 
@@ -117,59 +114,3 @@ func TestNewTodoBridgeKeepsOnlyTheLatestSnapshot(t *testing.T) {
 	}
 }
 
-func TestBuildBaseToolsHasEveryCapability(t *testing.T) {
-	mem, err := memory.NewFileStore(t.TempDir()+"/mem.json", "test/proj")
-	if err != nil {
-		t.Fatal(err)
-	}
-	reg := buildBaseTools(baseToolDeps{
-		todos:  todo.NewStore(),
-		lspMgr: lsp.NewManager(lsp.Config{}, t.TempDir()),
-		skills: skill.NewRegistry(),
-		mem:    mem,
-	})
-
-	want := []string{
-		"bash", "grep", "glob", "read_file", "write_file", "edit_file",
-		"todo_write", "lsp", "skill", "remember", "recall",
-	}
-	got := map[string]bool{}
-	for _, tl := range reg.All() {
-		got[tl.Name()] = true
-	}
-	for _, w := range want {
-		if !got[w] {
-			t.Errorf("falta la tool %q en el pool base", w)
-		}
-	}
-	if n := len(reg.All()); n != len(want) {
-		t.Errorf("el pool base tiene %d tools, esperaba %d (%v)", n, len(want), want)
-	}
-	if _, ok := reg.Get("delegate"); ok {
-		t.Error("delegate no debería estar en el pool base (los subagentes no recursan)")
-	}
-}
-
-func TestStartupSummary(t *testing.T) {
-	a := newTestApp(t)
-	if _, err := a.NewSession(); err != nil {
-		t.Fatal(err)
-	}
-
-	// projID absoluto (sin remote de git) -> se muestra sólo el nombre de carpeta
-	abs := startupSummary(a, startupInfo{
-		rulesLabel: "sin reglas", skills: 3, mcpTools: 0, hooks: 2, lspServers: 1,
-		projID: "/home/user/proyecto-x",
-	})
-	for _, want := range []string{"proveedor mock", "modo normal", "skills 3", "hooks 2", "lsp 1", "memoria 0", "[proyecto-x]"} {
-		if !strings.Contains(abs, want) {
-			t.Errorf("summary sin %q:\n%s", want, abs)
-		}
-	}
-
-	// projID con remote -> va tal cual
-	rem := startupSummary(a, startupInfo{projID: "owner/repo"})
-	if !strings.Contains(rem, "[owner/repo]") {
-		t.Errorf("un projID con remote debería mostrarse verbatim:\n%s", rem)
-	}
-}

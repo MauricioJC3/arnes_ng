@@ -30,22 +30,16 @@ import (
 	"bufio"
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go/option"
-
-	"github.com/MauricioJC3/arnes_ng/internal/agent"
+	"github.com/MauricioJC3/arnes_ng/internal/app"
 	"github.com/MauricioJC3/arnes_ng/internal/approval"
 	"github.com/MauricioJC3/arnes_ng/internal/checkpoint"
-	"github.com/MauricioJC3/arnes_ng/internal/command"
 	"github.com/MauricioJC3/arnes_ng/internal/compact"
 	"github.com/MauricioJC3/arnes_ng/internal/config"
 	"github.com/MauricioJC3/arnes_ng/internal/hook"
@@ -59,75 +53,9 @@ import (
 	"github.com/MauricioJC3/arnes_ng/internal/skill"
 	"github.com/MauricioJC3/arnes_ng/internal/subagent"
 	"github.com/MauricioJC3/arnes_ng/internal/todo"
-	"github.com/MauricioJC3/arnes_ng/internal/tool"
 	"github.com/MauricioJC3/arnes_ng/internal/tui"
 	"github.com/MauricioJC3/arnes_ng/internal/update"
 )
-
-const systemPrompt = `Sos un agente de programación que corre en la terminal del usuario, dentro de un arnés.
-Trabajás sobre el código del proyecto en el directorio actual.
-
-## Cómo trabajás
-
-- Antes de cambiar algo, LEELO. Usá read_file / grep / glob para entender el código y sus
-  convenciones. No adivines nombres de funciones, rutas ni APIs.
-- Herramientas independientes van juntas: pedí varias lecturas o búsquedas en una sola
-  respuesta en lugar de una por vuelta.
-- Los cambios son quirúrgicos: el diff más chico que resuelve el problema, respetando el estilo
-  del archivo (indentación, naming, densidad de comentarios).
-- Verificá lo que hacés: antes de dar algo por terminado corré la verificación del proyecto
-  (tests y, según el lenguaje, vet/lint/typecheck). Si algo falla, decilo con la salida real;
-  no lo maquilles.
-- Si una herramienta falla dos veces por la misma razón, pará y explicá el bloqueo. No repitas
-  el mismo intento a ciegas.
-- Terminá cuando la tarea está hecha. No agregues features, refactors ni "mejoras" que no se
-  pidieron.
-
-## Delegación
-
-- delegate + research: para EXPLORAR o mapear código amplio ("dónde está X", "cómo funciona Y",
-  varios archivos) sin llenarte el contexto. Devuelve un resumen con archivos y líneas.
-- delegate + test-writer: para escribir los tests de un archivo puntual.
-- Lo que resolvés en una o dos lecturas hacelo vos; no delegues tareas chicas.
-
-## Herramientas
-
-- grep: buscar texto/patrones en el código. NO uses bash con grep/find/rg para esto.
-- glob: encontrar archivos por patrón (ej. "internal/**/*_test.go").
-- read_file: leer un archivo completo.
-- edit_file: cambio puntual (reemplazo exacto de un fragmento). Es lo que usás para editar.
-  Para varios cambios en el mismo archivo pasá el array "edits" y se aplican en una sola llamada.
-- write_file: SOLO para archivos nuevos o reescrituras completas. Para editar algo existente,
-  edit_file.
-- bash: ejecutar cosas (tests, build, git, binarios). Un exit code distinto de cero no es un
-  error de la herramienta: se reporta en la salida y vos decidís cómo seguir.
-- todo_write: la lista de tareas del trabajo actual, visible para el usuario. Para tareas de
-  varios pasos, armá la lista al principio y actualizala (pasando SIEMPRE la lista completa) a
-  medida que avanzás: un solo ítem in_progress por vez, marcá completed apenas terminás cada uno.
-  Para tareas triviales de un paso no la uses.
-- lsp: consultá el language server sobre un archivo — diagnósticos (errores/warnings),
-  definición o hover (tipo/doc) de un símbolo. Después de editar, lsp con action "diagnostics"
-  sobre el archivo es un chequeo rápido antes de correr toda la suite. Puede no estar
-  configurado para el lenguaje del archivo.
-- skill: si la tarea coincide con un skill de la lista (la ves en la descripción de la tool),
-  invocá skill con su nombre ANTES de encararla y seguí esas instrucciones en lugar de tu
-  enfoque por defecto. Si ninguno aplica, no la uses.
-- remember / recall: memoria persistente entre sesiones, POR PROYECTO. Guardá decisiones,
-  convenciones y datos del proyecto que no sean obvios del código, apenas los descubrís o el
-  usuario los define — no esperes a que te lo pidan. Consultá con recall cuando el usuario haga
-  referencia a algo previo. Si arriba hay una sección "Memoria del proyecto", es lo ya guardado.
-
-## Permisos
-
-Cada uso de una herramienta pasa por aprobación humana. Si el usuario deniega una, no insistas:
-adaptá el plan y seguí con lo que sí podés hacer, o explicá qué te falta. Un hook del proyecto
-también puede bloquear una llamada (p. ej. correr tests antes de un commit): resolvé lo que el
-hook pide y reintentá, no lo esquives.
-
-## Estilo
-
-Conciso y directo. Nada de preámbulos ("Voy a...", "Perfecto, entonces...") ni resúmenes al
-final salvo que se pidan. Respondé en el idioma del usuario.`
 
 // version is set at build time via -ldflags "-X main.version=...".
 var version = "dev"
@@ -161,7 +89,7 @@ func run() error {
 	}
 
 	startup := startupConfig(cfg)
-	prov, providerName, err := providerFromConfig(mergeEnvKeys(startup))
+	prov, providerName, err := app.ProviderFromConfig(app.MergeEnvKeys(startup))
 	if err != nil {
 		return err
 	}
@@ -194,7 +122,7 @@ func run() error {
 	uiMode, streaming := resolveUI()
 
 	// Permission mode: ARNES_MODE wins over the config file; default normal.
-	startMode, err := parseMode(cmp.Or(os.Getenv("ARNES_MODE"), cfg.Mode, modeNormal))
+	startMode, err := app.ParseMode(cmp.Or(os.Getenv("ARNES_MODE"), cfg.Mode, app.ModeNormal))
 	if err != nil {
 		return err
 	}
@@ -210,43 +138,24 @@ func run() error {
 	// live. A buffered, latest-wins channel decouples the two goroutines.
 	todoStore, todos := newTodoBridge()
 
-	a := &app{
-		providerName:  providerName,
-		prov:          prov,
-		cfg:           cfg,
-		cfgPath:       cfgPath,
-		store:         store,
-		baseApprover:  approver,
-		mode:          startMode,
-		autoCompactor: autoCompactor,
-		compactAt:     compactAt,
-		streaming:     streaming,
-		deltas:        deltas,
-		checkpoints:   checkpoint.NewStore(),
-		mem:           mem,
-	}
-
 	subDefs, err := loadSubagents()
 	if err != nil {
 		return err
 	}
-	a.subagents = subagent.NewRegistry(subDefs...)
+	subReg := subagent.NewRegistry(subDefs...)
 
 	hookCfg, err := loadHooks()
 	if err != nil {
 		return err
 	}
 	hookCount := len(hookCfg.PreTool) + len(hookCfg.PostTool)
-	if !hookCfg.Empty() {
-		a.hooks = hook.New(hookCfg, 30*time.Second)
-	}
 
 	cwd, _ := os.Getwd()
 	rulesText, rulesSrc, err := rules.Load(cwd, os.Getenv("ARNES_RULES"))
 	if err != nil {
 		return err
 	}
-	a.rules = rules.Wrap(rulesText, rulesSrc)
+	rulesWrapped := rules.Wrap(rulesText, rulesSrc)
 	rulesLabel := "sin reglas"
 	if rulesSrc != "" {
 		rulesLabel = "reglas " + rulesSrc
@@ -265,13 +174,37 @@ func run() error {
 	}
 	skillReg := skill.NewRegistry(skills...)
 
+	deps := app.Deps{
+		ProviderName:  providerName,
+		Provider:      prov,
+		Cfg:           cfg,
+		CfgPath:       cfgPath,
+		Store:         store,
+		BaseApprover:  approver,
+		Mode:          startMode,
+		AutoCompactor: autoCompactor,
+		CompactAt:     compactAt,
+		Streaming:     streaming,
+		Deltas:        deltas,
+		Checkpoints:   checkpoint.NewStore(),
+		Mem:           mem,
+		Rules:         rulesWrapped,
+		Subagents:     subReg,
+		Version:       version,
+		Repo:          repo,
+	}
+	if !hookCfg.Empty() {
+		deps.Hooks = hook.New(hookCfg, 30*time.Second)
+	}
+	a := app.New(deps)
+
 	// The base pool has every tool except delegate; the agent's registry is the
 	// base plus delegate. Subagents draw from the base only (no recursion).
-	base := buildBaseTools(baseToolDeps{
-		todos:  todoStore,
-		lspMgr: lspMgr,
-		skills: skillReg,
-		mem:    mem,
+	base := app.BuildBaseTools(app.BaseToolDeps{
+		Todos:  todoStore,
+		LSPMgr: lspMgr,
+		Skills: skillReg,
+		Mem:    mem,
 	})
 
 	mcpTools := 0
@@ -285,16 +218,10 @@ func run() error {
 		mcpTools = len(mgr.Tools())
 	}
 
-	delegate := subagent.NewDelegateTool(a.subagents, func() provider.Provider { return a.prov }, base,
-		func() approval.Approver { return a.effectiveApprover() },
-		subagent.WithParentHistory(func() []provider.Message {
-			if a.ag == nil {
-				return nil
-			}
-			return a.ag.History()
-		}),
+	delegate := subagent.NewDelegateTool(subReg, a.Provider, base, a.EffectiveApprover,
+		subagent.WithParentHistory(a.History),
 	)
-	a.tools = base.With(delegate)
+	a.SetTools(base.With(delegate))
 
 	if id := os.Getenv("ARNES_RESUME"); id != "" {
 		if _, err := a.ResumeSession(id); err != nil {
@@ -304,13 +231,13 @@ func run() error {
 		return err
 	}
 
-	summary := startupSummary(a, startupInfo{
-		rulesLabel: rulesLabel,
-		skills:     skillReg.Len(),
-		mcpTools:   mcpTools,
-		hooks:      hookCount,
-		lspServers: lspMgr.Configured(),
-		projID:     projID,
+	summary := a.StartupSummary(app.StartupInfo{
+		RulesLabel: rulesLabel,
+		Skills:     skillReg.Len(),
+		MCPTools:   mcpTools,
+		Hooks:      hookCount,
+		LSPServers: lspMgr.Configured(),
+		ProjID:     projID,
 	})
 
 	if uiMode == "tui" {
@@ -320,12 +247,12 @@ func run() error {
 		}
 		return tui.Run(tui.Options{
 			Conv:       a,
-			ProviderFn: func() provider.Provider { return a.prov },
-			SessionID:  func() string { return a.sess.ID },
-			Stats:      func() int { return compact.EstimateTokens(a.ag.History()) },
+			ProviderFn: a.Provider,
+			SessionID:  a.SessionID,
+			Stats:      func() int { return compact.EstimateTokens(a.History()) },
 			Cost: func() string {
 				in, out := a.SessionUsage()
-				return costLine(a.prov.Model(), in, out)
+				return costLine(a.Model(), in, out)
 			},
 			Approvals: approvals,
 			Deltas:    deltas,
@@ -334,7 +261,7 @@ func run() error {
 			Theme:     theme,
 			Greeting:  summary,
 			ListModels: func(ctx context.Context, providerName, apiKey string) ([]string, error) {
-				return listModels(ctx, mergeEnvKeys(startup), providerName, apiKey)
+				return app.ListModels(ctx, app.MergeEnvKeys(startup), providerName, apiKey)
 			},
 		})
 	}
@@ -432,7 +359,7 @@ func loadSubagents() ([]subagent.Definition, error) {
 }
 
 // startupConfig layers the ARNES_PROVIDER / ARNES_MODEL env overrides onto a
-// copy of the loaded config. API keys are merged separately (mergeEnvKeys).
+// copy of the loaded config. API keys are merged separately (app.MergeEnvKeys).
 func startupConfig(cfg config.Config) config.Config {
 	startup := cfg.Clone()
 	if v := os.Getenv("ARNES_PROVIDER"); v != "" {
@@ -500,514 +427,6 @@ func newTodoBridge() (*todo.Store, chan []todo.Item) {
 	return store, ch
 }
 
-// baseToolDeps is what buildBaseTools needs from the rest of the wiring.
-type baseToolDeps struct {
-	todos  *todo.Store
-	lspMgr *lsp.Manager
-	skills *skill.Registry
-	mem    memory.Store
-}
-
-// buildBaseTools assembles the tool pool shared by the agent and its subagents
-// (everything except delegate, which would let subagents recurse).
-func buildBaseTools(d baseToolDeps) *tool.Registry {
-	return tool.NewRegistry(
-		tool.Bash{Timeout: 30 * time.Second},
-		tool.Grep{},
-		tool.Glob{},
-		tool.ReadFile{},
-		tool.WriteFile{},
-		tool.EditFile{},
-		tool.TodoWrite{Store: d.todos},
-		tool.LSP{Client: func(ctx context.Context, path string) (tool.LSPClient, error) {
-			return d.lspMgr.For(ctx, path)
-		}},
-		tool.Skill{Skills: d.skills},
-		tool.Remember{Store: d.mem},
-		tool.Recall{Store: d.mem},
-	)
-}
-
-// startupInfo carries the counts startupSummary can't read off the app itself.
-type startupInfo struct {
-	rulesLabel string
-	skills     int
-	mcpTools   int
-	hooks      int
-	lspServers int
-	projID     string
-}
-
-// startupSummary is the one-line banner printed (plain UI) or shown as the TUI
-// greeting: provider, model, mode and the size of every configured subsystem.
-func startupSummary(a *app, info startupInfo) string {
-	memCount := 0
-	if a.mem != nil {
-		if notes, err := a.mem.All(); err == nil {
-			memCount = len(notes)
-		}
-	}
-	projLabel := info.projID
-	if filepath.IsAbs(projLabel) { // no git remote: show just the folder name
-		projLabel = filepath.Base(projLabel)
-	}
-	return fmt.Sprintf("proveedor %s · modelo %s · modo %s · %s · sesión %s · compactación %s · subagentes %d · skills %d · mcp %d tools · hooks %d · lsp %d · memoria %d [%s]",
-		a.providerName, a.prov.Model(), a.mode, info.rulesLabel, a.sess.ID, a.ag.CompactorName(),
-		a.subagents.Len(), info.skills, info.mcpTools, info.hooks, info.lspServers, memCount, projLabel)
-}
-
-// app holds the machinery to (re)build a conversation and owns the live one. It
-// is the repl.Conversation, repl.Sessions, repl.Compaction and repl.Subagents
-// the REPL talks to.
-type app struct {
-	providerName  string
-	prov          provider.Provider
-	cfg           config.Config
-	cfgPath       string
-	tools         *tool.Registry
-	baseApprover  approval.Approver
-	mode          string
-	store         session.Store
-	subagents     *subagent.Registry
-	autoCompactor compact.Strategy
-	compactAt     int
-	streaming     bool
-	deltas        chan string
-	hooks         agent.Hooks       // pre/post tool-call hooks; nil when none configured
-	checkpoints   *checkpoint.Store // per-turn restore points for /rewind
-	mem           memory.Store      // project-scoped persistent memory (for the prompt digest)
-	rules         string            // project rules, already wrapped for the system prompt
-
-	sess            *session.Session
-	ag              *agent.Agent
-	conv            *session.Persisting
-	usedIn, usedOut int // cumulative token usage for the current session
-}
-
-// Connect implements command.Connector: switch provider (and optionally model /
-// api key), rebuild the agent, and persist the choice to the config file.
-func (a *app) Connect(providerName, model, apiKey string) (string, error) {
-	providerName = strings.ToLower(strings.TrimSpace(providerName))
-	if _, ok := providerKeyEnv[providerName]; !ok {
-		return "", fmt.Errorf("provider desconocido: %q (anthropic|deepseek|kimi|openai)", providerName)
-	}
-
-	next := a.cfg.Clone()
-	next.Provider = providerName
-	if model != "" {
-		next.Model = model
-	}
-	if apiKey != "" {
-		next.SetKey(providerName, apiKey)
-	}
-
-	p, name, err := providerFromConfig(mergeEnvKeys(next))
-	if err != nil {
-		return "", err
-	}
-
-	a.cfg = next
-	a.prov = p
-	a.providerName = name
-	a.rebuild(a.sess, a.sess.Messages)
-
-	if err := a.cfg.Save(a.cfgPath); err != nil {
-		return "", fmt.Errorf("conectado, pero no se pudo guardar en %s: %w", a.cfgPath, err)
-	}
-
-	extra := ""
-	if apiKey != "" {
-		extra = " · api key guardada"
-	}
-	return fmt.Sprintf("conectado: %s · modelo %s%s\nconfig: %s", name, p.Model(), extra, a.cfgPath), nil
-}
-
-// ActiveProvider implements command.Modeler.
-func (a *app) ActiveProvider() string { return a.providerName }
-
-// Model implements command.Modeler.
-func (a *app) Model() string { return a.prov.Model() }
-
-// KeyedProviders implements command.Modeler: the active provider first, then any
-// other provider that has an API key configured (file or environment).
-func (a *app) KeyedProviders() []string {
-	merged := mergeEnvKeys(a.cfg)
-	var rest []string
-	for name := range providerKeyEnv {
-		if name == a.providerName {
-			continue
-		}
-		if strings.TrimSpace(merged.Keys[name]) != "" {
-			rest = append(rest, name)
-		}
-	}
-	sort.Strings(rest)
-	return append([]string{a.providerName}, rest...)
-}
-
-// SetModel implements command.Modeler: change the model on the active provider
-// and persist it to the config file.
-func (a *app) SetModel(model string) (string, error) {
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return "", errors.New("modelo vacío")
-	}
-	a.prov.SetModel(model)
-	a.cfg.Model = model
-	if err := a.cfg.Save(a.cfgPath); err != nil {
-		return "", fmt.Errorf("modelo cambiado a %s, pero no se pudo guardar en %s: %w", a.prov.Model(), a.cfgPath, err)
-	}
-	return fmt.Sprintf("modelo: %s (%s)", a.prov.Model(), a.providerName), nil
-}
-
-// ListSubagents implements repl.Subagents.
-func (a *app) ListSubagents() []string {
-	var out []string
-	for _, d := range a.subagents.All() {
-		out = append(out, d.Name+": "+d.Description)
-	}
-	return out
-}
-
-// permission modes
-const (
-	modeNormal = "normal"
-	modeAuto   = "auto"
-	modePlan   = "plan"
-)
-
-// effectiveApprover is the gateway for the current mode.
-func (a *app) effectiveApprover() approval.Approver {
-	switch a.mode {
-	case modeAuto:
-		return approval.AllowAll{}
-	case modePlan:
-		return approval.ReadOnly{Allowed: map[string]bool{"read_file": true, "recall": true}}
-	default:
-		return a.baseApprover
-	}
-}
-
-// buildSystem assembles the full system prompt: the base, the project rules,
-// the project-memory digest (so a fresh session or a model switch keeps the
-// accumulated context), and the mode addendum.
-func (a *app) buildSystem() string {
-	s := systemPrompt + a.rules
-	if a.mem != nil {
-		if d := memory.Digest(a.mem, 15); d != "" {
-			s += "\n\n" + d
-		}
-	}
-	return s + modeAddendum(a.mode)
-}
-
-func modeAddendum(mode string) string {
-	switch mode {
-	case modePlan:
-		return "\n\nMODO PLAN ACTIVO: no modifiques nada. Investigá solo con read_file y proponé un plan " +
-			"detallado paso a paso. Las herramientas que escriben o ejecutan comandos van a ser denegadas."
-	case modeAuto:
-		return "\n\nMODO AUTO: las herramientas se ejecutan sin pedir confirmación. Cuidado con comandos destructivos."
-	default:
-		return ""
-	}
-}
-
-// Mode implements command.Modes.
-func (a *app) Mode() string { return a.mode }
-
-// parseMode normalizes a permission-mode string (bypass/yolo are aliases for
-// auto). An empty string is normal.
-func parseMode(name string) (string, error) {
-	switch name = strings.ToLower(strings.TrimSpace(name)); name {
-	case "", modeNormal:
-		return modeNormal, nil
-	case modeAuto, modePlan:
-		return name, nil
-	case "bypass", "yolo":
-		return modeAuto, nil
-	default:
-		return "", fmt.Errorf("modo desconocido: %q (normal|auto|plan)", name)
-	}
-}
-
-// SetMode implements command.Modes: switch the permission mode, rebuild, and
-// persist the choice so it sticks across restarts.
-func (a *app) SetMode(name string) (string, error) {
-	mode, err := parseMode(name)
-	if err != nil {
-		return "", err
-	}
-	a.mode = mode
-	a.rebuild(a.sess, a.sess.Messages)
-
-	a.cfg.Mode = mode
-	if saveErr := a.cfg.Save(a.cfgPath); saveErr != nil {
-		return "modo: " + mode + " (no se pudo guardar en la config: " + saveErr.Error() + ")", nil
-	}
-	return "modo: " + mode, nil
-}
-
-// rebuild swaps in a fresh agent + persister for the given session/history.
-func (a *app) rebuild(sess *session.Session, history []provider.Message) {
-	opts := []agent.Option{
-		agent.WithSystem(a.buildSystem()),
-		agent.WithHistory(history),
-		agent.WithWarnFn(func(err error) { fmt.Fprintln(os.Stderr, "arnés:", err) }),
-	}
-	if a.autoCompactor != nil {
-		opts = append(opts, agent.WithCompactor(a.autoCompactor), agent.WithCompactThreshold(a.compactAt))
-	}
-	if a.hooks != nil {
-		opts = append(opts, agent.WithHooks(a.hooks))
-	}
-	if a.checkpoints != nil {
-		opts = append(opts, agent.WithToolObserver(a.checkpoints.Observe))
-	}
-	if a.streaming {
-		opts = append(opts, agent.WithStreaming(true))
-		if a.deltas != nil {
-			opts = append(opts, agent.WithDeltaFn(func(s string) { a.deltas <- s }))
-		}
-	}
-	// Seed the new agent with the session's running total so /mode, /compact and
-	// /model don't reset the cost.
-	opts = append(opts, agent.WithUsage(a.usedIn, a.usedOut))
-
-	a.ag = agent.New(a.prov, a.tools, a.effectiveApprover(), opts...)
-	a.sess = sess
-	a.conv = session.NewPersisting(a.ag, a.store, sess, session.WithModelFn(func() string { return a.prov.Model() }))
-}
-
-// FreshConversation implements command.FreshFactory: a bare agent with empty
-// history (same provider, tools, approver, mode) for /goal --fresh. Not
-// persisted -- state for the fresh Ralph loop lives in files and git.
-func (a *app) FreshConversation() command.Conversation {
-	opts := []agent.Option{
-		agent.WithSystem(a.buildSystem()),
-		agent.WithWarnFn(func(err error) { fmt.Fprintln(os.Stderr, "arnés:", err) }),
-	}
-	if a.hooks != nil {
-		opts = append(opts, agent.WithHooks(a.hooks))
-	}
-	if a.checkpoints != nil {
-		opts = append(opts, agent.WithToolObserver(a.checkpoints.Observe))
-	}
-	if a.streaming {
-		opts = append(opts, agent.WithStreaming(true))
-		if a.deltas != nil {
-			opts = append(opts, agent.WithDeltaFn(func(s string) { a.deltas <- s }))
-		}
-	}
-	return agent.New(a.prov, a.tools, a.effectiveApprover(), opts...)
-}
-
-// SelfUpdate implements command.Updater: check GitHub for a newer release and,
-// if there is one, replace this binary with it. It blocks while downloading.
-func (a *app) SelfUpdate(ctx context.Context) (string, error) {
-	rel, newer, err := update.Check(ctx, update.GitHub{Repo: repo}, version)
-	if err != nil {
-		return "", err
-	}
-	if !newer {
-		return "arnes " + version + " ya está al día", nil
-	}
-	self, err := update.SelfPath()
-	if err != nil {
-		return "", err
-	}
-	if err := update.Apply(ctx, rel, self); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("actualizado %s → %s · reiniciá arnes para usar la nueva versión", version, rel.Version), nil
-}
-
-// Run implements repl.Conversation. It snapshots a restore point, delegates to
-// the live conversation, and keeps the session's cumulative token usage in sync
-// with the agent.
-func (a *app) Run(ctx context.Context, in string) (string, error) {
-	if a.checkpoints != nil {
-		a.checkpoints.Begin(a.ag.History(), in)
-	}
-	out, err := a.conv.Run(ctx, in)
-	a.usedIn, a.usedOut = a.ag.Usage()
-	return out, err
-}
-
-// ListCheckpoints implements command.Rewinder.
-func (a *app) ListCheckpoints() string { return a.checkpoints.Summary() }
-
-// Rewind implements command.Rewinder: restore the files captured since
-// checkpoint n and rebuild the agent from that checkpoint's history.
-func (a *app) Rewind(n int) (string, error) {
-	cp, err := a.checkpoints.Rewind(n)
-	if cp == nil {
-		return "", err
-	}
-	hist := cp.History()
-	a.sess.Messages = hist
-	a.rebuild(a.sess, hist)
-	if saveErr := a.store.Save(a.sess); saveErr != nil {
-		return "", fmt.Errorf("rewind aplicado, pero no se pudo guardar la sesión: %w", saveErr)
-	}
-	msg := fmt.Sprintf("rewind al checkpoint %d · %d archivo(s) restaurado(s) · historial en %d mensajes",
-		n, cp.Files(), len(hist))
-	if err != nil {
-		return msg, err // partial: some files failed to restore
-	}
-	return msg, nil
-}
-
-// SessionUsage returns the cumulative token usage since this session started.
-func (a *app) SessionUsage() (in, out int) { return a.usedIn, a.usedOut }
-
-// CostReport implements command.Coster: the current session's spend plus a
-// per-session history, with a total for the models that have a known price.
-func (a *app) CostReport() (string, error) {
-	metas, err := a.store.List()
-	if err != nil {
-		return "", err
-	}
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "sesión actual %s · %s · %s\n", a.sess.ID, a.prov.Model(), usageStr(a.prov.Model(), a.usedIn, a.usedOut))
-
-	if len(metas) > 0 {
-		b.WriteString("\nhistorial:\n")
-		var total float64
-		var haveTotal bool
-		for _, m := range metas {
-			mark := ""
-			if m.ID == a.sess.ID {
-				mark = "  ← actual"
-			}
-			fmt.Fprintf(&b, "  %s  %-16s  %8s tok  %s%s\n",
-				m.ID, m.Model, humanCount(m.UsageIn+m.UsageOut), usageStr(m.Model, m.UsageIn, m.UsageOut), mark)
-			if usd, ok := provider.Cost(m.Model, m.UsageIn, m.UsageOut); ok {
-				total += usd
-				haveTotal = true
-			}
-		}
-		if haveTotal {
-			fmt.Fprintf(&b, "\ntotal (modelos con tarifa conocida): $%.4f\n", total)
-		}
-	}
-	return strings.TrimRight(b.String(), "\n"), nil
-}
-
-// usageStr renders a token pair as a dollar figure, or "sin tarifa" when the
-// model has no known price.
-func usageStr(model string, in, out int) string {
-	if usd, ok := provider.Cost(model, in, out); ok {
-		return fmt.Sprintf("$%.4f", usd)
-	}
-	return "sin tarifa"
-}
-
-// humanCount abbreviates a token count: 1234 -> "1.2k", 2_000_000 -> "2.0M".
-func humanCount(n int) string {
-	switch {
-	case n < 1000:
-		return strconv.Itoa(n)
-	case n < 1_000_000:
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	default:
-		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
-	}
-}
-
-// SetStrategy implements repl.Compaction: swap the strategy at runtime.
-func (a *app) SetStrategy(name string) (string, error) {
-	s, err := strategyByName(name, a.prov)
-	if err != nil {
-		return "", err
-	}
-	a.ag.SetCompactor(s)
-	return "estrategia de compactación: " + s.Name(), nil
-}
-
-// Compact implements repl.Compaction: force compaction now and persist.
-func (a *app) Compact() (string, error) {
-	before, after, err := a.ag.Compact(context.Background())
-	if err != nil {
-		return "", err
-	}
-	a.sess.Messages = a.ag.History()
-	if saveErr := a.store.Save(a.sess); saveErr != nil {
-		return "", saveErr
-	}
-	return fmt.Sprintf("compactado con %s: ~%d → ~%d tokens", a.ag.CompactorName(), before, after), nil
-}
-
-// ListSessions implements repl.Sessions.
-func (a *app) ListSessions() ([]session.Meta, error) { return a.store.List() }
-
-// ResumeSession implements repl.Sessions: load by id or unique prefix, then swap.
-func (a *app) ResumeSession(id string) (string, error) {
-	s, err := a.resolve(id)
-	if err != nil {
-		return "", err
-	}
-	if s.Model != "" {
-		a.prov.SetModel(s.Model)
-	}
-	a.usedIn, a.usedOut = s.UsageIn, s.UsageOut // continue the session's spend
-	a.rebuild(s, s.Messages)
-	return fmt.Sprintf("reanudada %s (%d mensajes)", s.ID, len(s.Messages)), nil
-}
-
-// NewSession implements repl.Sessions.
-func (a *app) NewSession() (string, error) {
-	cwd, _ := os.Getwd()
-	s := session.New(a.providerName, a.prov.Model(), cwd)
-	a.usedIn, a.usedOut = 0, 0
-	a.rebuild(s, nil)
-	return "sesión nueva: " + s.ID, nil
-}
-
-// resolve finds a session by exact id, or by an unambiguous id prefix.
-func (a *app) resolve(id string) (*session.Session, error) {
-	switch s, err := a.store.Load(id); {
-	case err == nil:
-		return s, nil
-	case !errors.Is(err, session.ErrNotFound):
-		return nil, err
-	}
-
-	metas, err := a.store.List()
-	if err != nil {
-		return nil, err
-	}
-	var match string
-	for _, m := range metas {
-		if !strings.HasPrefix(m.ID, id) {
-			continue
-		}
-		if match != "" {
-			return nil, fmt.Errorf("el prefijo %q es ambiguo", id)
-		}
-		match = m.ID
-	}
-	if match == "" {
-		return nil, session.ErrNotFound
-	}
-	return a.store.Load(match)
-}
-
-// strategyByName resolves a /compact argument to a strategy.
-func strategyByName(name string, p provider.Provider) (compact.Strategy, error) {
-	switch strings.ToLower(name) {
-	case "none", "off":
-		return compact.None{}, nil
-	case "sliding", "sliding-window":
-		return compact.SlidingWindow{}, nil
-	case "summarize", "summary":
-		return compact.Summarize{Provider: p}, nil
-	default:
-		return nil, fmt.Errorf("estrategia desconocida: %q (none|sliding|summarize)", name)
-	}
-}
-
 // compactionFromEnv reads ARNES_COMPACT / ARNES_COMPACT_AT into an auto-
 // compaction strategy and threshold. Default: disabled.
 func compactionFromEnv(p provider.Provider) (compact.Strategy, int, error) {
@@ -1015,7 +434,7 @@ func compactionFromEnv(p provider.Provider) (compact.Strategy, int, error) {
 	if name == "off" || name == "none" || name == "" {
 		return nil, 0, nil
 	}
-	s, err := strategyByName(name, p)
+	s, err := app.StrategyByName(name, p)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1028,14 +447,6 @@ func compactionFromEnv(p provider.Provider) (compact.Strategy, int, error) {
 		at = n
 	}
 	return s, at, nil
-}
-
-// providerKeyEnv maps a provider name to the env var holding its API key.
-var providerKeyEnv = map[string]string{
-	"anthropic": "ANTHROPIC_API_KEY",
-	"deepseek":  "DEEPSEEK_API_KEY",
-	"kimi":      "MOONSHOT_API_KEY",
-	"openai":    "OPENAI_API_KEY",
 }
 
 // isFalsey reports whether s is an explicit "off" value.
@@ -1116,68 +527,4 @@ func configPath() (string, error) {
 		return p, nil
 	}
 	return config.DefaultPath()
-}
-
-// mergeEnvKeys returns a copy of cfg with any API key present in the environment
-// layered on top. Provider/model are NOT touched here.
-func mergeEnvKeys(cfg config.Config) config.Config {
-	out := cfg.Clone()
-	for prov, env := range providerKeyEnv {
-		if v := os.Getenv(env); v != "" {
-			out.SetKey(prov, v)
-		}
-	}
-	return out
-}
-
-// listModels builds a throwaway provider for providerName -- using apiKey, or
-// the key already known in base when apiKey is empty -- and asks it for the
-// model ids it can serve. Used by the /connect picker.
-func listModels(ctx context.Context, base config.Config, providerName, apiKey string) ([]string, error) {
-	keys := map[string]string{}
-	for k, v := range base.Keys {
-		keys[k] = v
-	}
-	if apiKey != "" {
-		keys[providerName] = apiKey
-	}
-	p, _, err := providerFromConfig(config.Config{Provider: providerName, Keys: keys})
-	if err != nil {
-		return nil, err
-	}
-	lister, ok := p.(provider.ModelLister)
-	if !ok {
-		return nil, fmt.Errorf("%s no permite listar modelos", providerName)
-	}
-	return lister.ListModels(ctx)
-}
-
-// providerFromConfig builds the provider named by cfg.Provider (default
-// anthropic), using cfg.Model and cfg.Keys. Model defaults are placeholders --
-// change them with /model or /connect.
-func providerFromConfig(cfg config.Config) (provider.Provider, string, error) {
-	name := strings.ToLower(cmp.Or(cfg.Provider, "anthropic"))
-	model := cfg.Model
-	key := func(p string) string { return cfg.Keys[p] }
-
-	switch name {
-	case "anthropic":
-		var opts []option.RequestOption
-		if k := key("anthropic"); k != "" {
-			opts = append(opts, option.WithAPIKey(k))
-		}
-		p := provider.NewAnthropic(opts...)
-		if model != "" {
-			p.SetModel(model)
-		}
-		return p, name, nil
-	case "deepseek":
-		return provider.NewDeepSeek(key("deepseek"), cmp.Or(model, "deepseek-v4-flash")), name, nil
-	case "kimi":
-		return provider.NewKimi(key("kimi"), cmp.Or(model, "moonshot-v1-8k")), name, nil
-	case "openai":
-		return provider.NewOpenAI(key("openai"), cmp.Or(model, "gpt-4o")), name, nil
-	default:
-		return nil, "", fmt.Errorf("provider desconocido: %q (anthropic|deepseek|kimi|openai)", name)
-	}
 }

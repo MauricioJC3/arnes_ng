@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -19,10 +19,10 @@ import (
 	"github.com/MauricioJC3/arnes_ng/internal/todo"
 )
 
-// newIntegrationApp wires an app the way run() does: the real base tool pool, a
-// real on-disk session store and project memory, the checkpoint store, and an
-// auto-approving gateway. Only the provider is a mock.
-func newIntegrationApp(t *testing.T, prov provider.Provider) *app {
+// newIntegrationApp wires an App the way the composition root does: the real
+// base tool pool, a real on-disk session store and project memory, the
+// checkpoint store, and an auto-approving gateway. Only the provider is a mock.
+func newIntegrationApp(t *testing.T, prov provider.Provider) *App {
 	t.Helper()
 	dir := t.TempDir()
 
@@ -34,21 +34,21 @@ func newIntegrationApp(t *testing.T, prov provider.Provider) *app {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tools := buildBaseTools(baseToolDeps{
-		todos:  todo.NewStore(),
-		lspMgr: lsp.NewManager(lsp.Config{}, dir),
-		skills: skill.NewRegistry(),
-		mem:    mem,
+	tools := BuildBaseTools(BaseToolDeps{
+		Todos:  todo.NewStore(),
+		LSPMgr: lsp.NewManager(lsp.Config{}, dir),
+		Skills: skill.NewRegistry(),
+		Mem:    mem,
 	})
 
-	return &app{
+	return &App{
 		providerName: "mock",
 		prov:         prov,
 		cfgPath:      dir + "/config.json",
 		store:        store,
 		tools:        tools,
 		baseApprover: approval.AllowAll{},
-		mode:         modeNormal,
+		mode:         ModeNormal,
 		subagents:    subagent.NewRegistry(),
 		checkpoints:  checkpoint.NewStore(),
 		mem:          mem,
@@ -263,32 +263,5 @@ func TestIntegrationFreshConversationDoesNotPersist(t *testing.T) {
 	}
 	if in, out := a.SessionUsage(); in != 0 || out != 0 {
 		t.Fatalf("FreshConversation no debería sumar al uso de la sesión: %d/%d", in, out)
-	}
-}
-
-func TestAppModelerMethods(t *testing.T) {
-	a := newTestApp(t)
-	if _, err := a.NewSession(); err != nil {
-		t.Fatal(err)
-	}
-
-	if a.ActiveProvider() != "mock" {
-		t.Fatalf("ActiveProvider = %q", a.ActiveProvider())
-	}
-	if a.Model() == "" {
-		t.Fatal("Model() vacío")
-	}
-	if kp := a.KeyedProviders(); len(kp) != 1 || kp[0] != "mock" {
-		t.Fatalf("KeyedProviders = %v (sin keys, sólo el activo)", kp)
-	}
-
-	if _, err := a.SetModel("   "); err == nil {
-		t.Fatal("SetModel con string vacío debería fallar")
-	}
-	if _, err := a.SetModel("mock-2"); err != nil {
-		t.Fatalf("SetModel: %v", err)
-	}
-	if a.Model() != "mock-2" {
-		t.Fatalf("SetModel no cambió el modelo: %q", a.Model())
 	}
 }

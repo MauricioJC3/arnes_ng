@@ -2,39 +2,8 @@ package main
 
 import (
 	"os"
-	"strings"
 	"testing"
 )
-
-func TestModeAddendum(t *testing.T) {
-	if s := modeAddendum(modeNormal); s != "" {
-		t.Fatalf("modo normal no debería agregar nada, dio %q", s)
-	}
-	if s := modeAddendum(modePlan); !strings.Contains(s, "PLAN") {
-		t.Fatalf("modo plan sin addendum: %q", s)
-	}
-	if s := modeAddendum(modeAuto); !strings.Contains(s, "AUTO") {
-		t.Fatalf("modo auto sin addendum: %q", s)
-	}
-}
-
-func TestHumanCount(t *testing.T) {
-	cases := []struct {
-		n    int
-		want string
-	}{
-		{0, "0"},
-		{999, "999"},
-		{1500, "1.5k"},
-		{999_999, "1000.0k"},
-		{2_000_000, "2.0M"},
-	}
-	for _, c := range cases {
-		if got := humanCount(c.n); got != c.want {
-			t.Errorf("humanCount(%d) = %q, want %q", c.n, got, c.want)
-		}
-	}
-}
 
 func TestLoadHooksFromEnv(t *testing.T) {
 	t.Run("archivo ausente = config vacío", func(t *testing.T) {
