@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -29,6 +30,25 @@ func TestTurnStartAgentDeliversResult(t *testing.T) {
 	}
 	if conv.seen[0] != "hacé algo" {
 		t.Fatalf("conv.Run recibió %v", conv.seen)
+	}
+}
+
+// panicConv blows up inside Run -- the goroutine must not leave the UI hanging.
+type panicConv struct{}
+
+func (panicConv) Run(context.Context, string) (string, error) { panic("boom en el provider") }
+
+func TestTurnStartAgentRecoversPanic(t *testing.T) {
+	tr := newTurn(nil)
+	tr.startAgent(panicConv{}, "hacé algo")
+
+	select {
+	case res := <-tr.results:
+		if res.err == nil || !strings.Contains(res.err.Error(), "pánico en el turno") {
+			t.Fatalf("un pánico debería volver como error, tengo: %+v", res)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("el pánico congeló el turno: results nunca recibió")
 	}
 }
 

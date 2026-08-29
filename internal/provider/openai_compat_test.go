@@ -280,6 +280,96 @@ func fastRetries(t *testing.T) {
 	t.Cleanup(func() { retryAttempts, retryBase, retryCap = ba, bb, bc })
 }
 
+// shortTimeouts shrinks the HTTP timeouts so the watchdog tests run fast.
+func shortTimeouts(t *testing.T, idle time.Duration) {
+	t.Helper()
+	rt, si := requestTimeout, streamIdleTimeout
+	requestTimeout, streamIdleTimeout = idle, idle
+	t.Cleanup(func() { requestTimeout, streamIdleTimeout = rt, si })
+}
+
+// The default client must NOT set http.Client.Timeout: it also caps the body
+// read and would kill a legitimate multi-minute streaming turn.
+func TestDefaultHTTPClientHasNoWholeRequestTimeout(t *testing.T) {
+	if got := defaultHTTPClient().Timeout; got != 0 {
+		t.Fatalf("http.Client.Timeout = %s, quiero 0 (sin tope de request entero)", got)
+	}
+}
+
+// A stream that goes silent after the first chunk is cut by the stall watchdog
+// with a clear message, not left hanging.
+func TestOpenAICompatStreamStalls(t *testing.T) {
+	shortTimeouts(t, 80*time.Millisecond)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"choices":[{"delta":{"content":"empiezo"},"finish_reason":null}]}`+"\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done() // never send anything else
+	}))
+	t.Cleanup(srv.Close)
+	oc := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, APIKey: "k", Model: "x"})
+
+	start := time.Now()
+	_, err := oc.StreamMessage(context.Background(),
+		Request{Messages: []Message{{Role: RoleUser, Text: "hola"}}}, nil)
+	if err == nil || !strings.Contains(err.Error(), "el stream se cortó") {
+		t.Fatalf("esperaba el corte del watchdog, tengo: %v", err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatalf("el watchdog tardó demasiado: %s", time.Since(start))
+	}
+}
+
+// A 2xx streaming response with no SSE frames (HTML error page) must surface an
+// error, not a silent empty answer.
+func TestOpenAICompatStreamEmptyBodyIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		io.WriteString(w, "<html><body>nope</body></html>")
+	}))
+	t.Cleanup(srv.Close)
+	oc := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, APIKey: "k", Model: "x"})
+
+	_, err := oc.StreamMessage(context.Background(),
+		Request{Messages: []Message{{Role: RoleUser, Text: "hola"}}}, nil)
+	if err == nil || !strings.Contains(err.Error(), "no devolvió datos") {
+		t.Fatalf("esperaba el error de stream vacío, tengo: %v", err)
+	}
+}
+
+// A slow but alive stream -- gaps under the idle timeout, total duration well
+// over it -- must complete, proving each chunk pushes the deadline out.
+func TestOpenAICompatSlowStreamIsNotCut(t *testing.T) {
+	shortTimeouts(t, 120*time.Millisecond)
+	frames := []string{
+		`{"choices":[{"delta":{"content":"a"},"finish_reason":null}]}`,
+		`{"choices":[{"delta":{"content":"b"},"finish_reason":null}]}`,
+		`{"choices":[{"delta":{"content":"c"},"finish_reason":null}]}`,
+		`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		`[DONE]`,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		for _, f := range frames {
+			time.Sleep(50 * time.Millisecond) // < idle, but 5*50 > idle
+			io.WriteString(w, "data: "+f+"\n\n")
+			fl.Flush()
+		}
+	}))
+	t.Cleanup(srv.Close)
+	oc := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, APIKey: "k", Model: "x"})
+
+	resp, err := oc.StreamMessage(context.Background(),
+		Request{Messages: []Message{{Role: RoleUser, Text: "hola"}}}, nil)
+	if err != nil {
+		t.Fatalf("un stream lento pero vivo no debería cortarse: %v", err)
+	}
+	if resp.Text != "abc" {
+		t.Fatalf("Text = %q", resp.Text)
+	}
+}
+
 func TestOpenAICompatStreamHTTPError(t *testing.T) {
 	fastRetries(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -2,12 +2,23 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"runtime/debug"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/MauricioJC3/arnes_ng/internal/command"
 	goalpkg "github.com/MauricioJC3/arnes_ng/internal/goal"
 )
+
+// reportPanic recovers a panic in a background turn goroutine and reports it as
+// a normal result, so the UI shows an error instead of freezing forever on a
+// results channel that never receives.
+func reportPanic(results chan<- runResult) {
+	if r := recover(); r != nil {
+		results <- runResult{err: fmt.Errorf("pánico en el turno: %v\n\n%s", r, debug.Stack())}
+	}
+}
 
 // turn owns the lifecycle of the in-flight agent work: whether something is
 // running, how to cancel it, the channels the background goroutine reports back
@@ -39,6 +50,7 @@ func (t *turn) startAgent(conv command.Conversation, text string) tea.Cmd {
 	t.cancel = cancel
 	results := t.results
 	go func() {
+		defer reportPanic(results)
 		out, err := conv.Run(ctx, text)
 		results <- runResult{text: out, err: err}
 	}()
@@ -64,6 +76,7 @@ func (t *turn) startGoal(conv command.Conversation, req *command.GoalRequest) te
 	}
 
 	go func() {
+		defer reportPanic(results)
 		rep, err := goalpkg.Run(ctx, conv, req.Text, cfg)
 		results <- runResult{goal: &rep, err: err}
 	}()

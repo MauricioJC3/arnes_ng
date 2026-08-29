@@ -319,9 +319,17 @@ func normalizeToolCalls(calls []provider.ToolCall) []provider.ToolCall {
 }
 
 // runTool applies the approval gateway, then executes the tool. It always
-// returns a ToolResult: a refusal or an execution error becomes an IsError
-// result fed back to the model, never a hard failure of the loop.
-func (a *Agent) runTool(ctx context.Context, call provider.ToolCall) provider.ToolResult {
+// returns a ToolResult: a refusal, an execution error, or a panic in the tool /
+// a hook / the observer becomes an IsError result fed back to the model, never a
+// hard failure of the loop (which, in the TUI, would freeze the turn).
+func (a *Agent) runTool(ctx context.Context, call provider.ToolCall) (res provider.ToolResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			res = provider.ToolResult{CallID: call.ID, IsError: true,
+				Content: fmt.Sprintf("La herramienta %q entró en pánico: %v", call.Name, r)}
+		}
+	}()
+
 	if !a.approver.Confirm(call) {
 		return provider.ToolResult{CallID: call.ID, IsError: true,
 			Content: "El usuario denegó la ejecución de esta herramienta."}
@@ -343,7 +351,7 @@ func (a *Agent) runTool(ctx context.Context, call provider.ToolCall) provider.To
 		a.observe(call)
 	}
 
-	res := provider.ToolResult{CallID: call.ID}
+	res = provider.ToolResult{CallID: call.ID}
 	if out, err := t.Execute(ctx, call.Input); err != nil {
 		res.IsError = true
 		res.Content = fmt.Sprintf("La herramienta %q falló: %v", call.Name, err)
