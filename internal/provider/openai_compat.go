@@ -428,12 +428,19 @@ type ocStreamOpts struct {
 	IncludeUsage bool `json:"include_usage"`
 }
 
+// ocMessage is one chat message on the wire. Content is a *string, always
+// serialized (no omitempty): a nil pointer emits `"content":null` -- required by
+// strict deserializers for an assistant turn that is only tool calls -- while a
+// non-nil pointer emits the string, `""` included (an empty tool result still
+// needs the key present).
 type ocMessage struct {
 	Role       string       `json:"role"`
-	Content    string       `json:"content,omitempty"`
+	Content    *string      `json:"content"`
 	ToolCalls  []ocToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string       `json:"tool_call_id,omitempty"`
 }
+
+func ocStr(s string) *string { return &s }
 
 type ocToolCall struct {
 	ID       string         `json:"id"`
@@ -477,7 +484,7 @@ type ocChatResponse struct {
 func toOCMessages(req Request) []ocMessage {
 	msgs := make([]ocMessage, 0, len(req.Messages)+1)
 	if req.System != "" {
-		msgs = append(msgs, ocMessage{Role: "system", Content: req.System})
+		msgs = append(msgs, ocMessage{Role: "system", Content: ocStr(req.System)})
 	}
 	for _, m := range req.Messages {
 		switch m.Role {
@@ -485,13 +492,17 @@ func toOCMessages(req Request) []ocMessage {
 			if len(m.ToolResults) > 0 {
 				// OpenAI wants one message per tool result, role "tool".
 				for _, tr := range m.ToolResults {
-					msgs = append(msgs, ocMessage{Role: "tool", ToolCallID: tr.CallID, Content: tr.Content})
+					msgs = append(msgs, ocMessage{Role: "tool", ToolCallID: tr.CallID, Content: ocStr(tr.Content)})
 				}
 				continue
 			}
-			msgs = append(msgs, ocMessage{Role: "user", Content: m.Text})
+			msgs = append(msgs, ocMessage{Role: "user", Content: ocStr(m.Text)})
 		case RoleAssistant:
-			am := ocMessage{Role: "assistant", Content: m.Text}
+			// A tool-only assistant turn keeps Content nil -> `"content":null`.
+			am := ocMessage{Role: "assistant"}
+			if m.Text != "" {
+				am.Content = ocStr(m.Text)
+			}
 			for _, tc := range m.ToolCalls {
 				am.ToolCalls = append(am.ToolCalls, ocToolCall{
 					ID:       tc.ID,
@@ -522,8 +533,12 @@ func toOCTools(defs []ToolDef) []ocTool {
 
 func fromOCResponse(r ocChatResponse) Response {
 	choice := r.Choices[0]
+	text := ""
+	if choice.Message.Content != nil {
+		text = *choice.Message.Content
+	}
 	resp := Response{
-		Text:       choice.Message.Content,
+		Text:       text,
 		StopReason: mapOCFinishReason(choice.FinishReason),
 		Usage: Usage{
 			InputTokens:  r.Usage.PromptTokens,

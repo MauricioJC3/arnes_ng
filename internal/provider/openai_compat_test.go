@@ -131,11 +131,65 @@ func TestOpenAICompatToolCallRoundTrip(t *testing.T) {
 	if len(sent.Messages[1].ToolCalls) != 1 || sent.Messages[1].ToolCalls[0].Function.Arguments != `{"command":"pwd"}` {
 		t.Errorf("assistant tool_calls mal serializado: %+v", sent.Messages[1].ToolCalls)
 	}
-	if sent.Messages[2].ToolCallID != "call_0" || sent.Messages[2].Content != "/home" {
+	if sent.Messages[2].ToolCallID != "call_0" || sent.Messages[2].Content == nil || *sent.Messages[2].Content != "/home" {
 		t.Errorf("tool message mal armado: %+v", sent.Messages[2])
 	}
 	if len(sent.Tools) != 1 || sent.Tools[0].Type != "function" || sent.Tools[0].Function.Name != "bash" {
 		t.Fatalf("tools mal traducidas: %+v", sent.Tools)
+	}
+}
+
+// TestOpenAICompatSendsContentOnEveryMessage guards the wire contract that broke
+// DeepSeek with `messages[N]: missing field content`: strict (serde-style)
+// deserializers reject an assistant tool-call turn or an empty tool result when
+// the `content` key is absent. Every outgoing message must carry it.
+func TestOpenAICompatSendsContentOnEveryMessage(t *testing.T) {
+	var rawBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rawBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}],"usage":{}}`)
+	}))
+	t.Cleanup(srv.Close)
+	oc := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, APIKey: "k", Model: "x"})
+
+	_, err := oc.SendMessage(context.Background(), Request{
+		System: "sos un asistente",
+		Messages: []Message{
+			{Role: RoleUser, Text: "listá los archivos"},
+			// assistant turn that is ONLY a tool call -- no prose
+			{Role: RoleAssistant, ToolCalls: []ToolCall{
+				{ID: "c1", Name: "bash", Input: json.RawMessage(`{"command":"ls"}`)},
+			}},
+			// a tool result that came back empty
+			{Role: RoleUser, ToolResults: []ToolResult{{CallID: "c1", Content: ""}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+
+	var payload struct {
+		Messages []map[string]json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(rawBody, &payload); err != nil {
+		t.Fatalf("body enviado ilegible: %v", err)
+	}
+	if len(payload.Messages) != 4 {
+		t.Fatalf("esperaba 4 mensajes (system, user, assistant, tool), tengo %d: %s", len(payload.Messages), rawBody)
+	}
+	for i, m := range payload.Messages {
+		if _, ok := m["content"]; !ok {
+			t.Errorf("mensaje %d sin campo \"content\": %s", i, rawBody)
+		}
+	}
+	// the assistant tool-call turn carries content: null
+	if got := string(payload.Messages[2]["content"]); got != "null" {
+		t.Errorf("assistant sin texto: content = %s, quiero null", got)
+	}
+	// the empty tool result carries content: ""
+	if got := string(payload.Messages[3]["content"]); got != `""` {
+		t.Errorf("tool result vacío: content = %s, quiero \"\"", got)
 	}
 }
 
