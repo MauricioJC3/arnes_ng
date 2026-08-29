@@ -96,6 +96,15 @@ type Response struct {
 	Usage      Usage
 }
 
+// IncompleteError means a turn stopped on a safety limit -- the step budget, a
+// repeated identical tool call, or repeated output truncation -- rather than on
+// a real failure. The agent loop still returns the partial text alongside it,
+// so a front-end should surface Reason as a notice and keep the partial answer
+// instead of treating the turn as an error. The user can continue with "seguí".
+type IncompleteError struct{ Reason string }
+
+func (e *IncompleteError) Error() string { return e.Reason }
+
 // Provider is the single seam between the agent loop and any LLM backend.
 type Provider interface {
 	Model() string

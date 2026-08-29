@@ -20,6 +20,10 @@ type Config struct {
 	// MaxSteps is the tool round-trip budget for one turn. 0 uses the built-in
 	// default; ARNES_MAX_STEPS overrides both.
 	MaxSteps int `json:"max_steps,omitempty"`
+	// MaxTokens caps the model's output per call. 0 uses the built-in default
+	// (agent.DefaultMaxTokens); ARNES_MAX_TOKENS overrides both. Raise it when
+	// the model keeps getting cut off mid write_file on a big file.
+	MaxTokens int `json:"max_tokens,omitempty"`
 	// ProtectedPaths are path.Match globs that still require confirmation in auto
 	// mode (write_file / edit_file only). Empty falls back to the built-in
 	// defaults (.env, .env.*).

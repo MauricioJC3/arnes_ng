@@ -124,9 +124,10 @@ func TestAgentOptionsGating(t *testing.T) {
 		streaming:   true,
 		deltas:      make(chan string, 1),
 		maxSteps:    50,
+		maxTokens:   8192,
 	}
-	if n := len(full.agentOptions()); n != 7 {
-		t.Fatalf("con hooks+checkpoints+streaming+deltas+maxSteps esperaba 7 opciones, hubo %d", n)
+	if n := len(full.agentOptions()); n != 8 {
+		t.Fatalf("con hooks+checkpoints+streaming+deltas+maxSteps+maxTokens esperaba 8 opciones, hubo %d", n)
 	}
 
 	noDelta := &App{streaming: true} // streaming on but no delta channel

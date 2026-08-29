@@ -20,7 +20,9 @@ Trabajás sobre el código del proyecto en el directorio actual.
   (tests y, según el lenguaje, vet/lint/typecheck). Si algo falla, decilo con la salida real;
   no lo maquilles.
 - Si una herramienta falla dos veces por la misma razón, pará y explicá el bloqueo. No repitas
-  el mismo intento a ciegas.
+  el mismo intento a ciegas: el arnés corta el turno si repetís la misma llamada tres veces.
+- Si tu respuesta anterior se cortó por límite de tokens, no reintentes la misma llamada gigante:
+  continuá desde donde quedaste o partí el trabajo en pasos más chicos.
 - Terminá cuando la tarea está hecha. No agregues features, refactors ni "mejoras" que no se
   pidieron.
 
@@ -36,7 +38,9 @@ Trabajás sobre el código del proyecto en el directorio actual.
 - grep / glob: para buscar texto o archivos en el código. NO uses bash con grep/find/rg/ls.
 - edit_file: para editar algo que ya existe (reemplazo exacto de un fragmento). Varios cambios
   al mismo archivo van en el array "edits", en una sola llamada.
-- write_file: SOLO para archivos nuevos o reescrituras completas.
+- write_file: SOLO para archivos nuevos o reescrituras completas. Para un archivo nuevo grande,
+  escribí una primera parte y agregá el resto con edit_file, en vez de emitir miles de líneas
+  en una sola llamada (se corta por tokens).
 - bash: para lo demás (tests, git, binarios). Un exit code distinto de cero no es un error de
   la herramienta: se reporta en la salida y vos decidís cómo seguir.
 - todo_write: la lista de tareas del trabajo actual, visible para el usuario. Para tareas de

@@ -65,8 +65,8 @@ func TestOpenAICompatTextReply(t *testing.T) {
 	if len(sent.Messages) != 2 || sent.Messages[0].Role != "system" || sent.Messages[1].Role != "user" {
 		t.Fatalf("mensajes enviados mal armados: %+v", sent.Messages)
 	}
-	if sent.MaxTokens != 4096 {
-		t.Errorf("MaxTokens enviado = %d, quiero el default 4096", sent.MaxTokens)
+	if sent.MaxTokens != 8192 {
+		t.Errorf("MaxTokens enviado = %d, quiero el default 8192", sent.MaxTokens)
 	}
 }
 
@@ -392,6 +392,137 @@ func TestOpenAICompatListModelsHTTPError(t *testing.T) {
 	oc := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, APIKey: "nope", Model: "x"})
 	if _, err := oc.ListModels(context.Background()); err == nil {
 		t.Fatal("una respuesta 401 debería devolver error")
+	}
+}
+
+// --- "el formato que se devuelve" failures -------------------------------
+//
+// These pin the response-shape errors a user runs into on long sessions with
+// the cheaper / free-tier providers, and the one arnes bug that turns a
+// truncated completion into a tool-call loop instead of a clear message.
+
+// A gateway that answers 200 with an HTML error page (overloaded free tier,
+// proxy timeout) every time -- post() only retries 429/5xx, so SendMessage
+// retries the non-JSON body a couple of times and then surfaces a format error.
+func TestOpenAICompatGarbledBodyIsFormatError(t *testing.T) {
+	fastRetries(t)
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, "<html><body><h1>502 Bad Gateway</h1></body></html>")
+	}))
+	t.Cleanup(srv.Close)
+	oc := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, APIKey: "k", Model: "x"})
+
+	_, err := oc.SendMessage(context.Background(), Request{Messages: []Message{{Role: RoleUser, Text: "hola"}}})
+	if err == nil || !strings.Contains(err.Error(), "respuesta ilegible") {
+		t.Fatalf("esperaba el error de formato, tengo: %v", err)
+	}
+	if hits < 2 {
+		t.Fatalf("esperaba reintentos ante body no-JSON, hubo %d request(s)", hits)
+	}
+	t.Logf("error de formato devuelto tras %d intentos:\n  %v", hits, err)
+}
+
+// The same flaky gateway, but the JSON reply lands on the 2nd try: SendMessage
+// recovers instead of failing.
+func TestOpenAICompatRetriesGarbledBodyThenSucceeds(t *testing.T) {
+	fastRetries(t)
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		if hits == 1 {
+			_, _ = io.WriteString(w, "<html>502</html>")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"al fin"}}]}`)
+	}))
+	t.Cleanup(srv.Close)
+	oc := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, APIKey: "k", Model: "x"})
+
+	resp, err := oc.SendMessage(context.Background(), Request{Messages: []Message{{Role: RoleUser, Text: "hola"}}})
+	if err != nil {
+		t.Fatalf("debería recuperarse en el 2do intento: %v", err)
+	}
+	if resp.Text != "al fin" || hits != 2 {
+		t.Fatalf("Text=%q hits=%d", resp.Text, hits)
+	}
+}
+
+// Some providers answer 200 with an empty choices array under load or a content
+// filter. The turn has nothing to work with.
+func TestOpenAICompatEmptyChoicesIsFormatError(t *testing.T) {
+	oc := newTestOC(t, `{"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 0}}`, nil)
+
+	_, err := oc.SendMessage(context.Background(), Request{Messages: []Message{{Role: RoleUser, Text: "hola"}}})
+	if err == nil || !strings.Contains(err.Error(), "no trae choices") {
+		t.Fatalf("esperaba el error de choices vacío, tengo: %v", err)
+	}
+	t.Logf("error de formato devuelto:\n  %v", err)
+}
+
+// Root cause linking both symptoms: when the completion is cut at max_tokens in
+// the middle of a tool call, the provider sends finish_reason "length" AND a
+// partial tool_call with invalid-JSON arguments. The fix drops that unrunnable
+// call and keeps the turn a max_tokens stop, so the agent nudges the model to
+// continue / go smaller instead of dispatching a tool it can't parse and
+// looping into the step-budget cutoff.
+func TestOpenAICompatLengthFinishWithPartialToolCallIsTruncation(t *testing.T) {
+	oc := newTestOC(t, `{
+		"choices": [{
+			"finish_reason": "length",
+			"message": {
+				"role": "assistant",
+				"content": null,
+				"tool_calls": [{
+					"id": "call_1",
+					"type": "function",
+					"function": {"name": "write_file", "arguments": "{\"path\": \"big.go\", \"content\": \"package main\\nfunc main() {"}
+				}]
+			}
+		}],
+		"usage": {"prompt_tokens": 50, "completion_tokens": 4096}
+	}`, nil)
+
+	resp, err := oc.SendMessage(context.Background(), Request{Messages: []Message{{Role: RoleUser, Text: "generá big.go"}}})
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if resp.StopReason != StopMaxTokens {
+		t.Fatalf("StopReason = %q, quiero StopMaxTokens (la señal 'length' se conserva)", resp.StopReason)
+	}
+	if len(resp.ToolCalls) != 0 {
+		t.Fatalf("el tool call truncado debería descartarse, quedan %d", len(resp.ToolCalls))
+	}
+}
+
+// A complete, valid tool call on a "length" finish is kept and run -- only a
+// truncated (invalid-JSON) trailing call is dropped.
+func TestOpenAICompatLengthFinishWithCompleteToolCallIsKept(t *testing.T) {
+	oc := newTestOC(t, `{
+		"choices": [{
+			"finish_reason": "length",
+			"message": {
+				"role": "assistant",
+				"content": null,
+				"tool_calls": [{
+					"id": "call_1",
+					"type": "function",
+					"function": {"name": "read_file", "arguments": "{\"path\": \"main.go\"}"}
+				}]
+			}
+		}],
+		"usage": {"prompt_tokens": 50, "completion_tokens": 4096}
+	}`, nil)
+
+	resp, err := oc.SendMessage(context.Background(), Request{Messages: []Message{{Role: RoleUser, Text: "leé main.go"}}})
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	if resp.StopReason != StopToolUse || len(resp.ToolCalls) != 1 {
+		t.Fatalf("un tool call completo debería correr: StopReason=%q calls=%d", resp.StopReason, len(resp.ToolCalls))
 	}
 }
 

@@ -53,6 +53,7 @@ type Deps struct {
 	AutoCompactor compact.Strategy
 	CompactAt     int
 	MaxSteps      int // tool round-trips per turn; <=0 uses agent.DefaultMaxSteps
+	MaxTokens     int // output-token cap per model call; <=0 uses agent.DefaultMaxTokens
 	Streaming     bool
 	Deltas        chan string
 	Hooks         agent.Hooks       // pre/post tool-call hooks; nil when none configured
@@ -80,6 +81,7 @@ type App struct {
 	autoCompactor compact.Strategy
 	compactAt     int
 	maxSteps      int
+	maxTokens     int
 	streaming     bool
 	deltas        chan string
 	hooks         agent.Hooks
@@ -109,6 +111,7 @@ func New(d Deps) *App {
 		autoCompactor: d.AutoCompactor,
 		compactAt:     d.CompactAt,
 		maxSteps:      cmp.Or(d.MaxSteps, agent.DefaultMaxSteps),
+		maxTokens:     cmp.Or(d.MaxTokens, agent.DefaultMaxTokens),
 		streaming:     d.Streaming,
 		deltas:        d.Deltas,
 		hooks:         d.Hooks,
@@ -171,6 +174,9 @@ func (a *App) agentOptions() []agent.Option {
 	}
 	if a.maxSteps > 0 {
 		opts = append(opts, agent.WithMaxSteps(a.maxSteps))
+	}
+	if a.maxTokens > 0 {
+		opts = append(opts, agent.WithMaxTokens(a.maxTokens))
 	}
 	if a.hooks != nil {
 		opts = append(opts, agent.WithHooks(a.hooks))

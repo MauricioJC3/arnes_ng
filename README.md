@@ -49,7 +49,8 @@ que lo envuelve.
   `write_file` / `edit_file`). `/rewind` lista los checkpoints; `/rewind n` vuelve
   al checkpoint `n`: reescribe los archivos y recorta el historial. Viven en
   memoria durante el proceso; los cambios hechos por `bash` no se rastrean.
-- **Compactación de contexto**: `none`, `sliding`, `summarize`, con umbral de tokens.
+- **Compactación de contexto**: `sliding` (default), `summarize` u `off`, con umbral de tokens,
+  para que una sesión larga no infle el contexto ni empuje al modelo a loops.
 - **Subagentes**: delegación a agentes especializados (`research`, `test-writer`),
   sin recursión.
 - **Skills**: archivos `SKILL.md` (mismo formato que Claude Code) en
@@ -148,8 +149,10 @@ Las variables ganan sobre el archivo de config.
 | `ARNES_UI` | `tui` (default) `\|` `plain` |
 | `ARNES_STREAM` | `off` para desactivar el streaming en la TUI |
 | `ARNES_MOUSE` | `on` para capturar el mouse (rueda de scroll; deshabilita la selección de texto del terminal). Por defecto OFF; `Ctrl+O` lo alterna en vivo |
-| `ARNES_COMPACT` | `off` (default) `\|` `sliding` `\|` `summarize` |
+| `ARNES_COMPACT` | `sliding` (default) `\|` `summarize` `\|` `off` |
 | `ARNES_COMPACT_AT` | umbral de tokens para auto-compactar (default 120000) |
+| `ARNES_MAX_STEPS` | round-trips de herramientas por turno (default 50) |
+| `ARNES_MAX_TOKENS` | tope de tokens de salida por llamada al modelo (default 8192) |
 | `ARNES_RESUME` | id (o prefijo) de sesión a reanudar al arrancar |
 | `ARNES_RULES` | ruta a un archivo de reglas del proyecto (default: `AGENTS.md` en el cwd) |
 | `ARNES_AUTO_UPDATE` | `on` para que el chequeo diario instale la versión nueva por su cuenta |

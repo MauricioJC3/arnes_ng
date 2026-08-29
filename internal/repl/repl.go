@@ -71,11 +71,19 @@ func (r *REPL) handle(ctx context.Context, line string) (stop bool) {
 	}
 
 	reply, err := r.conv.Run(ctx, line)
-	if err != nil {
+	var incomplete *provider.IncompleteError
+	switch {
+	case errors.As(err, &incomplete):
+		// Stopped on a safety limit: keep the partial reply, note why.
+		if strings.TrimSpace(reply) != "" {
+			fmt.Fprintln(r.out, reply)
+		}
+		fmt.Fprintf(r.out, "⨯ %v\n", err)
+	case err != nil:
 		fmt.Fprintf(r.out, "error: %v\n", err)
-		return false
+	default:
+		fmt.Fprintln(r.out, reply)
 	}
-	fmt.Fprintln(r.out, reply)
 	return false
 }
 

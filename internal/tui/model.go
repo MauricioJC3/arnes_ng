@@ -390,6 +390,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Keep whatever was streamed so far, then note the interruption.
 			m.commitLive()
 			m.add(kindInfo, "⨯ turno interrumpido")
+		case isIncomplete(msg.err):
+			// Stopped on a safety limit, not a failure: keep the partial answer
+			// and show the reason as a notice, not a red error.
+			m.transcript.dropLive()
+			if strings.TrimSpace(msg.text) != "" {
+				m.add(kindAssistant, msg.text)
+			}
+			m.add(kindInfo, "⨯ "+msg.err.Error())
 		case msg.err != nil:
 			m.transcript.dropLive()
 			m.add(kindError, msg.err.Error())
@@ -605,6 +613,13 @@ func waitForNotice(ch chan string) tea.Cmd {
 
 func waitForTodos(ch chan []todo.Item) tea.Cmd {
 	return func() tea.Msg { return todosMsg(<-ch) }
+}
+
+// isIncomplete reports whether err is the agent loop stopping on a safety limit
+// (step budget, repeated call, repeated truncation) rather than a real failure.
+func isIncomplete(err error) bool {
+	var inc *provider.IncompleteError
+	return errors.As(err, &inc)
 }
 
 // redactConnect masks the api-key argument of /connect so it never lands in the

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -157,11 +158,15 @@ func TestAgentRun(t *testing.T) {
 	})
 
 	t.Run("corta al llegar al límite de pasos y devuelve el texto parcial", func(t *testing.T) {
+		// Cada paso pide una llamada DISTINTA (input único), así se agota el
+		// presupuesto de pasos sin que salte el guardia de repetición.
+		var n int
 		p := &provider.MockProvider{}
 		p.Handler = func(provider.Request) (provider.Response, error) {
+			n++
 			return provider.Response{
 				Text:       "voy por acá...",
-				ToolCalls:  []provider.ToolCall{{ID: "c", Name: "echo", Input: json.RawMessage(`{}`)}},
+				ToolCalls:  []provider.ToolCall{{ID: "c", Name: "echo", Input: json.RawMessage(`{"n":` + strconv.Itoa(n) + `}`)}},
 				StopReason: provider.StopToolUse,
 			}, nil
 		}
@@ -169,14 +174,65 @@ func TestAgentRun(t *testing.T) {
 		a := New(p, tool.NewRegistry(ft), approval.AllowAll{}, WithMaxSteps(3))
 
 		out, err := a.Run(ctx, "loop infinito")
-		if err == nil {
-			t.Fatal("esperaba error por límite de pasos, no hubo")
+		var incomplete *provider.IncompleteError
+		if !errors.As(err, &incomplete) || !strings.Contains(err.Error(), "me detuve tras 3 pasos") {
+			t.Fatalf("esperaba un *provider.IncompleteError por límite de pasos, tengo: %v", err)
 		}
 		if out != "voy por acá..." {
 			t.Fatalf("texto parcial = %q, quiero el último texto del modelo", out)
 		}
 		if ft.calls != 3 {
 			t.Fatalf("ejecuciones = %d, quiero 3 (una por paso)", ft.calls)
+		}
+	})
+
+	t.Run("corta el turno si el modelo repite la misma llamada", func(t *testing.T) {
+		p := &provider.MockProvider{}
+		p.Handler = func(provider.Request) (provider.Response, error) {
+			return provider.Response{
+				ToolCalls:  []provider.ToolCall{{ID: "c", Name: "echo", Input: json.RawMessage(`{"x":1}`)}},
+				StopReason: provider.StopToolUse,
+			}, nil
+		}
+		ft := &fakeTool{name: "echo", out: "eco"}
+		a := New(p, tool.NewRegistry(ft), approval.AllowAll{}, WithMaxSteps(50))
+
+		_, err := a.Run(ctx, "hacelo")
+		var incomplete *provider.IncompleteError
+		if !errors.As(err, &incomplete) || !strings.Contains(err.Error(), `repitió la misma llamada a "echo" 3 veces`) {
+			t.Fatalf("esperaba un *provider.IncompleteError por repetición, tengo: %v", err)
+		}
+		if ft.calls != 2 {
+			t.Fatalf("ejecuciones = %d, quiero 2 (corta antes de la 3ra idéntica)", ft.calls)
+		}
+	})
+
+	t.Run("argumentos truncados: error claro al modelo, sin ejecutar la tool", func(t *testing.T) {
+		var n int
+		p := &provider.MockProvider{}
+		p.Handler = func(provider.Request) (provider.Response, error) {
+			n++
+			if n == 1 {
+				return provider.Response{
+					ToolCalls:  []provider.ToolCall{{ID: "c", Name: "echo", Input: json.RawMessage(`{"path":"a`)}},
+					StopReason: provider.StopToolUse,
+				}, nil
+			}
+			return provider.Response{Text: "ok, lo parto", StopReason: provider.StopEndTurn}, nil
+		}
+		ft := &fakeTool{name: "echo", out: "eco"}
+		a := New(p, tool.NewRegistry(ft), approval.AllowAll{}, WithMaxSteps(5))
+
+		if _, err := a.Run(ctx, "escribí"); err != nil {
+			t.Fatal(err)
+		}
+		if ft.calls != 0 {
+			t.Fatalf("la tool no debería haberse ejecutado con args inválidos, calls = %d", ft.calls)
+		}
+		// El historial: assistant(call normalizado a {}) -> user(tool result de error) -> assistant final.
+		res := a.History()[2].ToolResults
+		if len(res) != 1 || !res[0].IsError || !strings.Contains(res[0].Content, "mal formados") {
+			t.Fatalf("resultado realimentado = %+v", res)
 		}
 	})
 
@@ -187,6 +243,49 @@ func TestAgentRun(t *testing.T) {
 		_, err := a.Run(ctx, "hola")
 		if err == nil || !strings.Contains(err.Error(), "503") {
 			t.Fatalf("esperaba el error del provider propagado, tengo: %v", err)
+		}
+	})
+
+	t.Run("una respuesta cortada por tokens: reintenta y sigue", func(t *testing.T) {
+		var n int
+		p := &provider.MockProvider{}
+		p.Handler = func(req provider.Request) (provider.Response, error) {
+			n++
+			if n == 1 {
+				return provider.Response{Text: "func main() {", StopReason: provider.StopMaxTokens}, nil
+			}
+			// El nudge del arnés quedó en el historial como turno de usuario.
+			last := req.Messages[len(req.Messages)-1]
+			if last.Role != provider.RoleUser || !strings.Contains(last.Text, "se cortó por el límite de tokens") {
+				return provider.Response{}, errors.New("no llegó el aviso de truncado")
+			}
+			return provider.Response{Text: "  println(\"ok\")\n}", StopReason: provider.StopEndTurn}, nil
+		}
+		a := New(p, tool.NewRegistry(), approval.AllowAll{}, WithMaxSteps(5))
+
+		out, err := a.Run(ctx, "escribí main")
+		if err != nil {
+			t.Fatalf("un solo corte debería recuperarse: %v", err)
+		}
+		if out != "  println(\"ok\")\n}" || n != 2 {
+			t.Fatalf("out=%q n=%d", out, n)
+		}
+	})
+
+	t.Run("cortes por tokens repetidos: se rinde con IncompleteError", func(t *testing.T) {
+		p := &provider.MockProvider{}
+		p.Handler = func(provider.Request) (provider.Response, error) {
+			return provider.Response{Text: "sigo escribiendo...", StopReason: provider.StopMaxTokens}, nil
+		}
+		a := New(p, tool.NewRegistry(), approval.AllowAll{}, WithMaxSteps(20))
+
+		out, err := a.Run(ctx, "escribí algo enorme")
+		var incomplete *provider.IncompleteError
+		if !errors.As(err, &incomplete) || !strings.Contains(err.Error(), "límite de tokens de salida") {
+			t.Fatalf("esperaba un *provider.IncompleteError por truncado repetido, tengo: %v", err)
+		}
+		if out != "sigo escribiendo..." {
+			t.Fatalf("debería devolver el texto parcial, tengo: %q", out)
 		}
 	})
 

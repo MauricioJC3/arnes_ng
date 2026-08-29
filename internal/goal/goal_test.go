@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/MauricioJC3/arnes_ng/internal/provider"
 )
 
 // scriptConv returns the next canned reply each Run, recording the prompts it saw.
@@ -84,6 +86,29 @@ func TestRunPropagatesRealError(t *testing.T) {
 	rep, err := Run(context.Background(), c, "x", Config{})
 	if err == nil || rep.Reason != "error" {
 		t.Fatalf("err=%v report=%+v", err, rep)
+	}
+}
+
+// incompleteConv fails the first turn with an IncompleteError (safety limit),
+// then finishes on the second.
+type incompleteConv struct{ n int }
+
+func (c *incompleteConv) Run(context.Context, string) (string, error) {
+	c.n++
+	if c.n == 1 {
+		return "avancé un poco...", &provider.IncompleteError{Reason: "me detuve tras 50 pasos"}
+	}
+	return "listo\n" + Sentinel, nil
+}
+
+func TestRunKeepsGoingAfterIncompleteTurn(t *testing.T) {
+	c := &incompleteConv{}
+	rep, err := Run(context.Background(), c, "x", Config{MaxIterations: 5})
+	if err != nil {
+		t.Fatalf("un turno incompleto no debería abortar el goal loop: %v", err)
+	}
+	if c.n != 2 || rep.Reason != "completado" {
+		t.Fatalf("n=%d report=%+v", c.n, rep)
 	}
 }
 
