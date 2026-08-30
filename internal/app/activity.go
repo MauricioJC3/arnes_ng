@@ -80,6 +80,8 @@ func activityLine(call provider.ToolCall) string {
 		line = "consultó la memoria"
 	case "lsp":
 		line = "lsp " + get("action")
+	case "code_graph":
+		line = "code_graph " + strings.TrimSpace(get("op")+" "+get("query"))
 	case "delegate":
 		line = "delegó en el subagente " + get("agent")
 	default:
