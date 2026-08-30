@@ -352,6 +352,12 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 	todoNudged := false            // the unfinished-checklist nudge has fired this turn
 
 	for step := 0; step < a.maxSteps; step++ {
+		// Stop as soon as the caller cancels (Ctrl+C / timeout), rather than
+		// waiting for the next provider or tool call to notice.
+		if err := ctx.Err(); err != nil {
+			return lastText, err
+		}
+
 		// Emergency context compaction: a turn that balloons past the model's
 		// window mid-flight would otherwise 400 on every remaining call.
 		if err := a.guardContext(ctx); err != nil {

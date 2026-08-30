@@ -104,6 +104,7 @@ func (c CodeGraph) Execute(ctx context.Context, input json.RawMessage) (string, 
 	}
 	cmd := exec.CommandContext(ctx, c.bin, args...)
 	cmd.Dir = c.dir
+	hardenCmd(cmd)
 	out, err := cmd.CombinedOutput()
 	res := string(out)
 	if err != nil {

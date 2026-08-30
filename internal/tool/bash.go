@@ -73,13 +73,18 @@ func (b Bash) Execute(ctx context.Context, input json.RawMessage) (string, error
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	out, err := exec.CommandContext(ctx, "bash", "-c", in.Command).CombinedOutput()
+	cmd := exec.CommandContext(ctx, "bash", "-c", in.Command)
+	hardenCmd(cmd) // own process group + bounded wait, so a cancel actually kills it
+	out, err := cmd.CombinedOutput()
 	result := string(out)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		switch {
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
 			result += fmt.Sprintf("\n[el comando se canceló por límite de tiempo (%s); "+
 				"si es legítimamente largo, reintentá con un timeout_seconds mayor]", timeout)
-		} else {
+		case errors.Is(ctx.Err(), context.Canceled):
+			result += "\n[el comando se canceló (Ctrl+C)]"
+		default:
 			result += fmt.Sprintf("\n[el comando terminó con error: %v]", err)
 		}
 	}
