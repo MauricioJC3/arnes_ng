@@ -256,6 +256,7 @@ func run() error {
 		Skills: skillReg,
 		Mem:    mem,
 		Files:  tool.NewFileTracker(),
+		CWD:    cwd,
 	})
 
 	mcpTools := 0

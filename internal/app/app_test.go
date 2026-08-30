@@ -456,6 +456,7 @@ func TestBuildBaseToolsHasEveryCapability(t *testing.T) {
 		LSPMgr: lsp.NewManager(lsp.Config{}, t.TempDir()),
 		Skills: skill.NewRegistry(),
 		Mem:    mem,
+		CWD:    t.TempDir(), // no .codegraph/ here: keep the base set deterministic
 	})
 
 	want := []string{

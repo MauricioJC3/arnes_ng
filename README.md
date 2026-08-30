@@ -16,6 +16,10 @@ que lo envuelve.
 - **Herramientas base**: `bash`, `grep` (busca texto, usa ripgrep si está),
   `glob` (busca archivos, soporta `**`), `read_file`, `write_file`, `edit_file`
   (reemplazo quirúrgico), y memoria persistente por proyecto (`remember` / `recall`).
+- **`code_graph`** (opcional): si el CLI `codegraph` está instalado y el proyecto
+  tiene índice (`.codegraph/`), aparece una tool de solo lectura para preguntas
+  estructurales — `callers`, `callees`, `impact`, `explore`, `query` — en una
+  llamada en vez de encadenar greps. Si no está, no se ofrece.
 - **Eficiencia**: prompt caching en Anthropic (`cache_control` en system + tools +
   prefijo del historial) y retry con backoff ante 429/5xx.
 - **Gateway de aprobación**: nada que escriba o ejecute corre sin un sí. Denegar
