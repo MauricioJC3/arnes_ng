@@ -13,6 +13,8 @@
 //	ARNES_MAX_TOKENS    output-token cap per model call (default 8192)
 //	ARNES_MAX_TOOL_OUTPUT  byte cap on one tool result before its middle is elided (default 200000)
 //	ARNES_CONTEXT_GUARD   estimated-token ceiling that forces a mid-turn compaction (default 150000)
+//	ARNES_CHECK_CMD    project verification the completion gate runs before a turn that edited anything can end
+//	ARNES_PROVIDER_RETRIES  extra attempts on a transient model-call failure (default 3; 0 disables)
 //	ARNES_SUBAGENTS     path to a subagents JSON file (default ~/.arnes/subagents.json)
 //	ARNES_SKILLS        path to the global skills directory (default ~/.arnes/skills)
 //	ARNES_MCP           path to an mcp.json file (default ~/.arnes/mcp.json)
@@ -154,6 +156,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	providerRetries, err := providerRetriesFromEnv()
+	if err != nil {
+		return err
+	}
 
 	// A once-a-day background check for a newer release. It never blocks startup;
 	// the result (if any) is surfaced on notices.
@@ -211,30 +217,31 @@ func run() error {
 	skillReg := skill.NewRegistry(skills...)
 
 	deps := app.Deps{
-		ProviderName:  providerName,
-		Provider:      prov,
-		Cfg:           cfg,
-		CfgPath:       cfgPath,
-		Store:         store,
-		BaseApprover:  approver,
-		Mode:          startMode,
-		AutoCompactor: autoCompactor,
-		CompactAt:     compactAt,
-		MaxSteps:      maxSteps,
-		MaxTokens:     maxTokens,
-		MaxToolResult: maxToolOut,
-		ContextGuard:  contextGuard,
-		Streaming:     streaming,
-		Deltas:        deltas,
-		Activity:      activity,
-		Checkpoints:   checkpoint.NewStore(checkpoint.WithWorkdir(cwd)),
-		Mem:           mem,
-		Rules:         rulesWrapped,
-		Subagents:     subReg,
-		Version:       version,
-		Repo:          repo,
-		Todos:         todoStore,
-		CheckCommand:  cmp.Or(os.Getenv("ARNES_CHECK_CMD"), cfg.CheckCommand),
+		ProviderName:    providerName,
+		Provider:        prov,
+		Cfg:             cfg,
+		CfgPath:         cfgPath,
+		Store:           store,
+		BaseApprover:    approver,
+		Mode:            startMode,
+		AutoCompactor:   autoCompactor,
+		CompactAt:       compactAt,
+		MaxSteps:        maxSteps,
+		MaxTokens:       maxTokens,
+		MaxToolResult:   maxToolOut,
+		ContextGuard:    contextGuard,
+		ProviderRetries: providerRetries,
+		Streaming:       streaming,
+		Deltas:          deltas,
+		Activity:        activity,
+		Checkpoints:     checkpoint.NewStore(checkpoint.WithWorkdir(cwd)),
+		Mem:             mem,
+		Rules:           rulesWrapped,
+		Subagents:       subReg,
+		Version:         version,
+		Repo:            repo,
+		Todos:           todoStore,
+		CheckCommand:    cmp.Or(os.Getenv("ARNES_CHECK_CMD"), cfg.CheckCommand),
 	}
 	if !hookCfg.Empty() {
 		deps.Hooks = hook.New(hookCfg, 30*time.Second)

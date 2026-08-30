@@ -116,13 +116,13 @@ func TestRebuildSwapsAgentAndPreservesUsage(t *testing.T) {
 }
 
 // TestAgentOptionsGating: the shared option set grows only with what is
-// actually configured. The completion-gate anchor and the checklist nudge are
-// always wired (they no-op when there is no task or checklist), so the baseline
-// is 4: system, warn, anchor, open-todos.
+// actually configured. The completion-gate anchor, the checklist nudge and the
+// provider-retry setting are always wired (they no-op or take a default when
+// unset), so the baseline is 5: system, warn, anchor, open-todos, provider-retries.
 func TestAgentOptionsGating(t *testing.T) {
 	bare := &App{} // no hooks, no checkpoints, no streaming, no maxSteps
-	if n := len(bare.agentOptions()); n != 4 {
-		t.Fatalf("sin nada configurado esperaba 4 opciones (system, warn, anchor, open-todos), hubo %d", n)
+	if n := len(bare.agentOptions()); n != 5 {
+		t.Fatalf("sin nada configurado esperaba 5 opciones (system, warn, anchor, open-todos, provider-retries), hubo %d", n)
 	}
 
 	full := &App{
@@ -134,13 +134,13 @@ func TestAgentOptionsGating(t *testing.T) {
 		maxTokens:    8192,
 		checkCommand: "go test ./...",
 	}
-	if n := len(full.agentOptions()); n != 11 {
-		t.Fatalf("con hooks+checkpoints+streaming+deltas+maxSteps+maxTokens+check esperaba 11 opciones, hubo %d", n)
+	if n := len(full.agentOptions()); n != 12 {
+		t.Fatalf("con hooks+checkpoints+streaming+deltas+maxSteps+maxTokens+check esperaba 12 opciones, hubo %d", n)
 	}
 
 	noDelta := &App{streaming: true} // streaming on but no delta channel
-	if n := len(noDelta.agentOptions()); n != 5 {
-		t.Fatalf("streaming sin canal de deltas esperaba 5 opciones, hubo %d", n)
+	if n := len(noDelta.agentOptions()); n != 6 {
+		t.Fatalf("streaming sin canal de deltas esperaba 6 opciones, hubo %d", n)
 	}
 }
 

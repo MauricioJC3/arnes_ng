@@ -168,6 +168,7 @@ Las variables ganan sobre el archivo de config.
 | `ARNES_MAX_STEPS` | round-trips de herramientas por turno (default 50) |
 | `ARNES_MAX_TOKENS` | tope de tokens de salida por llamada al modelo (default 8192) |
 | `ARNES_CHECK_CMD` | comando de verificación del proyecto (ej. `go build ./... && go test ./...`); si un turno editó algo, el modelo no puede cerrarlo hasta que pase. Vacío lo desactiva; también se puede fijar en `check_command` en la config |
+| `ARNES_PROVIDER_RETRIES` | reintentos extra ante un fallo transitorio del modelo — 429/5xx, stream cortado o estancado — con backoff (default 3; `0` lo desactiva) |
 | `ARNES_RESUME` | id (o prefijo) de sesión a reanudar al arrancar |
 | `ARNES_RULES` | ruta a un archivo de reglas del proyecto (default: `AGENTS.md` en el cwd) |
 | `ARNES_AUTO_UPDATE` | `on` para que el chequeo diario instale la versión nueva por su cuenta |

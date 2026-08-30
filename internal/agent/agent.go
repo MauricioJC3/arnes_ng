@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/MauricioJC3/arnes_ng/internal/approval"
 	"github.com/MauricioJC3/arnes_ng/internal/compact"
@@ -33,6 +34,8 @@ type Agent struct {
 
 	stream  bool
 	onDelta func(string) // text deltas when streaming
+
+	providerRetries int // extra attempts on a transient provider failure; 0 = no retry
 
 	maxToolResult int // byte cap on a single tool result fed back to the model; 0 disables
 	contextGuard  int // token ceiling that forces an emergency compaction mid-turn; 0 disables
@@ -142,6 +145,30 @@ func WithToolObserver(fn func(provider.ToolCall)) Option {
 // WithStreaming turns on streaming when the provider implements provider.Streamer.
 func WithStreaming(on bool) Option { return func(a *Agent) { a.stream = on } }
 
+// DefaultProviderRetries is how many extra times a model call is re-issued when
+// it fails with a transient error (HTTP 429/5xx, a dropped or stalled stream)
+// before the turn gives up. The provider adapters already retry at the
+// transport level; this is the outer net that also rescues a mid-stream drop,
+// which the transport cannot resume but the loop can safely re-request.
+const DefaultProviderRetries = 3
+
+// WithProviderRetries sets how many extra attempts a transient provider failure
+// gets. n <= 0 disables loop-level retry (a single attempt).
+func WithProviderRetries(n int) Option {
+	return func(a *Agent) {
+		if n < 0 {
+			n = 0
+		}
+		a.providerRetries = n
+	}
+}
+
+// providerRetry* tune the loop-level backoff; package vars so tests shrink them.
+var (
+	providerRetryBase = 1 * time.Second
+	providerRetryCap  = 15 * time.Second
+)
+
 // WithDeltaFn registers the sink for streamed text deltas.
 func WithDeltaFn(f func(string)) Option { return func(a *Agent) { a.onDelta = f } }
 
@@ -178,15 +205,16 @@ func WithOpenTodosFn(fn func() []string) Option {
 // compaction.
 func New(p provider.Provider, tools *tool.Registry, ap approval.Approver, opts ...Option) *Agent {
 	a := &Agent{
-		provider:      p,
-		tools:         tools,
-		approver:      ap,
-		maxTokens:     DefaultMaxTokens,
-		maxSteps:      DefaultMaxSteps,
-		maxToolResult: DefaultMaxToolResult,
-		contextGuard:  DefaultContextGuard,
-		compactor:     compact.None{},
-		warn:          func(error) {},
+		provider:        p,
+		tools:           tools,
+		approver:        ap,
+		maxTokens:       DefaultMaxTokens,
+		maxSteps:        DefaultMaxSteps,
+		maxToolResult:   DefaultMaxToolResult,
+		contextGuard:    DefaultContextGuard,
+		providerRetries: DefaultProviderRetries,
+		compactor:       compact.None{},
+		warn:            func(error) {},
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -337,13 +365,7 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 			MaxTokens: a.maxTokens,
 		}
 
-		var resp provider.Response
-		var err error
-		if s, ok := a.provider.(provider.Streamer); ok && a.stream {
-			resp, err = s.StreamMessage(ctx, req, a.onDelta)
-		} else {
-			resp, err = a.provider.SendMessage(ctx, req)
-		}
+		resp, err := a.callProvider(ctx, req)
 		if err != nil {
 			return "", fmt.Errorf("provider: %w", err)
 		}
@@ -514,6 +536,48 @@ func (a *Agent) anchor() string {
 		return ""
 	}
 	return a.anchorFn()
+}
+
+// callProvider issues one model call (streaming when configured), retrying a
+// transient failure -- a rate limit, a 5xx, a dropped or stalled stream -- up to
+// providerRetries times with exponential backoff. A cancelled context or a
+// non-transient error returns immediately. Nothing has been appended to the
+// history yet at the point Run calls this, so a full re-request is safe.
+func (a *Agent) callProvider(ctx context.Context, req provider.Request) (provider.Response, error) {
+	for attempt := 0; ; attempt++ {
+		var resp provider.Response
+		var err error
+		if s, ok := a.provider.(provider.Streamer); ok && a.stream {
+			resp, err = s.StreamMessage(ctx, req, a.onDelta)
+		} else {
+			resp, err = a.provider.SendMessage(ctx, req)
+		}
+		if err == nil {
+			return resp, nil
+		}
+		if ctx.Err() != nil {
+			return provider.Response{}, ctx.Err() // the user cancelled: surface that, not the provider error
+		}
+		if attempt >= a.providerRetries || !provider.Transient(err) {
+			return resp, err
+		}
+		a.warn(fmt.Errorf("llamada al proveedor falló (%v); reintento %d/%d", err, attempt+1, a.providerRetries))
+		select {
+		case <-time.After(providerBackoff(attempt)):
+		case <-ctx.Done():
+			return provider.Response{}, ctx.Err()
+		}
+	}
+}
+
+// providerBackoff is the wait before retry attempt n (0-indexed): 1s, 2s, 4s...
+// capped, no jitter -- the transport layer already jitters its own retries.
+func providerBackoff(attempt int) time.Duration {
+	d := providerRetryBase << attempt
+	if d <= 0 || d > providerRetryCap {
+		d = providerRetryCap
+	}
+	return d
 }
 
 // mutatingTools are the tool names that change the workspace, so a turn that ran

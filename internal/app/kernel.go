@@ -45,31 +45,32 @@ import (
 // these (reading the environment, the config file and the default paths) and
 // passes them to New; the app never touches those itself.
 type Deps struct {
-	ProviderName  string
-	Provider      provider.Provider
-	Cfg           config.Config
-	CfgPath       string
-	Store         session.Store
-	BaseApprover  approval.Approver
-	Mode          string
-	AutoCompactor compact.Strategy
-	CompactAt     int
-	MaxSteps      int // tool round-trips per turn; <=0 uses agent.DefaultMaxSteps
-	MaxTokens     int // output-token cap per model call; <=0 uses agent.DefaultMaxTokens
-	MaxToolResult int // byte cap on one tool result; <=0 uses agent.DefaultMaxToolResult
-	ContextGuard  int // emergency token ceiling for mid-turn compaction; <=0 uses agent.DefaultContextGuard
-	Streaming     bool
-	Deltas        chan string
-	Activity      chan string       // live "what the agent is doing" lines (tool calls); nil to disable
-	Hooks         agent.Hooks       // pre/post tool-call hooks; nil when none configured
-	Checkpoints   *checkpoint.Store // per-turn restore points for /rewind
-	Mem           memory.Store      // project-scoped persistent memory (for the prompt digest)
-	Rules         string            // project rules, already wrapped for the system prompt
-	Subagents     *subagent.Registry
-	Version       string      // running binary version, for /update-arnes
-	Repo          string      // GitHub owner/name the self-updater pulls from
-	Todos         *todo.Store // task checklist; persisted per session and restored on resume
-	CheckCommand  string      // project verification for the completion gate; empty disables it
+	ProviderName    string
+	Provider        provider.Provider
+	Cfg             config.Config
+	CfgPath         string
+	Store           session.Store
+	BaseApprover    approval.Approver
+	Mode            string
+	AutoCompactor   compact.Strategy
+	CompactAt       int
+	MaxSteps        int // tool round-trips per turn; <=0 uses agent.DefaultMaxSteps
+	MaxTokens       int // output-token cap per model call; <=0 uses agent.DefaultMaxTokens
+	MaxToolResult   int // byte cap on one tool result; <=0 uses agent.DefaultMaxToolResult
+	ContextGuard    int // emergency token ceiling for mid-turn compaction; <=0 uses agent.DefaultContextGuard
+	ProviderRetries int // extra attempts on a transient model-call failure; <0 uses agent.DefaultProviderRetries, 0 disables
+	Streaming       bool
+	Deltas          chan string
+	Activity        chan string       // live "what the agent is doing" lines (tool calls); nil to disable
+	Hooks           agent.Hooks       // pre/post tool-call hooks; nil when none configured
+	Checkpoints     *checkpoint.Store // per-turn restore points for /rewind
+	Mem             memory.Store      // project-scoped persistent memory (for the prompt digest)
+	Rules           string            // project rules, already wrapped for the system prompt
+	Subagents       *subagent.Registry
+	Version         string      // running binary version, for /update-arnes
+	Repo            string      // GitHub owner/name the self-updater pulls from
+	Todos           *todo.Store // task checklist; persisted per session and restored on resume
+	CheckCommand    string      // project verification for the completion gate; empty disables it
 }
 
 // App holds the machinery to (re)build a conversation and owns the live one. It
@@ -104,6 +105,7 @@ type App struct {
 
 	todos           *todo.Store
 	checkCommand    string
+	providerRetries int
 	firstTask       string // the session's original user request, kept for the completion-gate anchor
 	sess            *session.Session
 	ag              *agent.Agent
@@ -115,32 +117,42 @@ type App struct {
 // SetTools, because the delegate tool needs a reference to the App itself.
 func New(d Deps) *App {
 	return &App{
-		providerName:  d.ProviderName,
-		prov:          d.Provider,
-		cfg:           d.Cfg,
-		cfgPath:       d.CfgPath,
-		store:         d.Store,
-		baseApprover:  d.BaseApprover,
-		mode:          d.Mode,
-		autoCompactor: d.AutoCompactor,
-		compactAt:     d.CompactAt,
-		maxSteps:      cmp.Or(d.MaxSteps, agent.DefaultMaxSteps),
-		maxTokens:     cmp.Or(d.MaxTokens, agent.DefaultMaxTokens),
-		maxToolResult: d.MaxToolResult, // 0 -> agentOptions skips it, agent.New applies its own default
-		contextGuard:  d.ContextGuard,  // 0 -> agentOptions skips it, agent.New applies its own default
-		streaming:     d.Streaming,
-		deltas:        d.Deltas,
-		activity:      d.Activity,
-		hooks:         d.Hooks,
-		checkpoints:   d.Checkpoints,
-		mem:           d.Mem,
-		rules:         d.Rules,
-		subagents:     d.Subagents,
-		version:       d.Version,
-		repo:          d.Repo,
-		todos:         d.Todos,
-		checkCommand:  d.CheckCommand,
+		providerName:    d.ProviderName,
+		prov:            d.Provider,
+		cfg:             d.Cfg,
+		cfgPath:         d.CfgPath,
+		store:           d.Store,
+		baseApprover:    d.BaseApprover,
+		mode:            d.Mode,
+		autoCompactor:   d.AutoCompactor,
+		compactAt:       d.CompactAt,
+		maxSteps:        cmp.Or(d.MaxSteps, agent.DefaultMaxSteps),
+		maxTokens:       cmp.Or(d.MaxTokens, agent.DefaultMaxTokens),
+		maxToolResult:   d.MaxToolResult, // 0 -> agentOptions skips it, agent.New applies its own default
+		contextGuard:    d.ContextGuard,  // 0 -> agentOptions skips it, agent.New applies its own default
+		streaming:       d.Streaming,
+		deltas:          d.Deltas,
+		activity:        d.Activity,
+		hooks:           d.Hooks,
+		checkpoints:     d.Checkpoints,
+		mem:             d.Mem,
+		rules:           d.Rules,
+		subagents:       d.Subagents,
+		version:         d.Version,
+		repo:            d.Repo,
+		todos:           d.Todos,
+		checkCommand:    d.CheckCommand,
+		providerRetries: providerRetriesOr(d.ProviderRetries),
 	}
+}
+
+// providerRetriesOr maps the Deps sentinel (<0) to the agent default, and passes
+// through 0 (disabled) or a positive override unchanged.
+func providerRetriesOr(n int) int {
+	if n < 0 {
+		return agent.DefaultProviderRetries
+	}
+	return n
 }
 
 // SetTools installs the agent's tool pool. Call once, after New, before the
@@ -223,6 +235,7 @@ func (a *App) agentOptions() []agent.Option {
 	opts = append(opts,
 		agent.WithAnchorFn(a.anchorText),
 		agent.WithOpenTodosFn(a.openTodos),
+		agent.WithProviderRetries(a.providerRetries),
 	)
 	return opts
 }
