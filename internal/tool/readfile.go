@@ -8,8 +8,9 @@ import (
 	"os"
 )
 
-// ReadFile returns the full contents of a text file.
-type ReadFile struct{}
+// ReadFile returns the full contents of a text file. A non-nil Tracker records
+// every successful read so edit_file / write_file can enforce read-before-write.
+type ReadFile struct{ Tracker *FileTracker }
 
 func (ReadFile) Name() string { return "read_file" }
 
@@ -31,7 +32,7 @@ func (ReadFile) InputSchema() map[string]any {
 	}
 }
 
-func (ReadFile) Execute(_ context.Context, input json.RawMessage) (string, error) {
+func (r ReadFile) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var in struct {
 		Path string `json:"path"`
 	}
@@ -45,5 +46,6 @@ func (ReadFile) Execute(_ context.Context, input json.RawMessage) (string, error
 	if err != nil {
 		return "", fmt.Errorf("no se pudo leer %s: %w", in.Path, err)
 	}
+	r.Tracker.MarkRead(in.Path)
 	return string(data), nil
 }

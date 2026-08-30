@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 )
 
-// WriteFile creates or overwrites a text file, making parent directories as needed.
-type WriteFile struct{}
+// WriteFile creates or overwrites a text file, making parent directories as
+// needed. A non-nil Tracker enforces read-before-write: overwriting an EXISTING
+// file the model has not read this session is refused.
+type WriteFile struct{ Tracker *FileTracker }
 
 func (WriteFile) Name() string { return "write_file" }
 
@@ -31,7 +33,7 @@ func (WriteFile) InputSchema() map[string]any {
 	}
 }
 
-func (WriteFile) Execute(_ context.Context, input json.RawMessage) (string, error) {
+func (w WriteFile) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var in struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
@@ -42,6 +44,9 @@ func (WriteFile) Execute(_ context.Context, input json.RawMessage) (string, erro
 	if in.Path == "" {
 		return "", errors.New("el parámetro 'path' es obligatorio")
 	}
+	if err := w.Tracker.GuardWrite(in.Path); err != nil {
+		return "", err
+	}
 	if dir := filepath.Dir(in.Path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return "", fmt.Errorf("no se pudo crear el directorio %s: %w", dir, err)
@@ -50,5 +55,6 @@ func (WriteFile) Execute(_ context.Context, input json.RawMessage) (string, erro
 	if err := os.WriteFile(in.Path, []byte(in.Content), 0o644); err != nil {
 		return "", fmt.Errorf("no se pudo escribir %s: %w", in.Path, err)
 	}
+	w.Tracker.MarkRead(in.Path) // the model authored the whole file; it knows its contents
 	return fmt.Sprintf("escritos %d bytes en %s", len(in.Content), in.Path), nil
 }

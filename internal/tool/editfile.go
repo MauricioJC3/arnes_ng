@@ -12,8 +12,9 @@ import (
 // EditFile replaces an exact snippet of text in an existing file. It takes
 // either a single old/new pair or an "edits" array applied in order to the same
 // file in one shot; the array is all-or-nothing (nothing is written if any edit
-// fails).
-type EditFile struct{}
+// fails). A non-nil Tracker enforces read-before-write: editing a file the model
+// has not read this session is refused.
+type EditFile struct{ Tracker *FileTracker }
 
 func (EditFile) Name() string { return "edit_file" }
 
@@ -62,7 +63,7 @@ type editOp struct {
 	ReplaceAll bool   `json:"replace_all"`
 }
 
-func (EditFile) Execute(_ context.Context, input json.RawMessage) (string, error) {
+func (e EditFile) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var in struct {
 		Path       string   `json:"path"`
 		Old        string   `json:"old"`
@@ -75,6 +76,9 @@ func (EditFile) Execute(_ context.Context, input json.RawMessage) (string, error
 	}
 	if in.Path == "" {
 		return "", errors.New("el parámetro 'path' es obligatorio")
+	}
+	if err := e.Tracker.GuardWrite(in.Path); err != nil {
+		return "", err
 	}
 
 	ops := in.Edits
@@ -126,6 +130,7 @@ func (EditFile) Execute(_ context.Context, input json.RawMessage) (string, error
 	if err := os.WriteFile(in.Path, []byte(content), mode); err != nil {
 		return "", fmt.Errorf("no se pudo escribir %s: %w", in.Path, err)
 	}
+	e.Tracker.MarkRead(in.Path) // the edit result is known; a follow-up edit needs no re-read
 
 	delta := strings.Count(content, "\n") - strings.Count(original, "\n")
 	sfx := ""
