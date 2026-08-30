@@ -24,17 +24,28 @@ func (m Model) footerRows() int {
 	return rows
 }
 
-// visibleTodos is how many checklist rows the panel will render (0 when the
-// panel is disabled or empty).
+// visibleTodos is how many checklist rows the panel will render. It is 0 when
+// the panel is disabled, the list is empty, or every item is done -- a finished
+// checklist retires itself instead of lingering on screen.
 func (m Model) visibleTodos() int {
 	n := len(m.todoItems)
-	if m.todos == nil || n == 0 {
+	if m.todos == nil || n == 0 || allTodosDone(m.todoItems) {
 		return 0
 	}
 	if n > maxTodoRows {
 		return maxTodoRows
 	}
 	return n
+}
+
+// allTodosDone reports whether a non-empty checklist has every item completed.
+func allTodosDone(items []todo.Item) bool {
+	for _, it := range items {
+		if it.Status != todo.Done {
+			return false
+		}
+	}
+	return len(items) > 0
 }
 
 // relayout recomputes component sizes for the current terminal size.

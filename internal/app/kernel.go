@@ -36,6 +36,7 @@ import (
 	"github.com/MauricioJC3/arnes_ng/internal/provider"
 	"github.com/MauricioJC3/arnes_ng/internal/session"
 	"github.com/MauricioJC3/arnes_ng/internal/subagent"
+	"github.com/MauricioJC3/arnes_ng/internal/todo"
 	"github.com/MauricioJC3/arnes_ng/internal/tool"
 )
 
@@ -64,8 +65,9 @@ type Deps struct {
 	Mem           memory.Store      // project-scoped persistent memory (for the prompt digest)
 	Rules         string            // project rules, already wrapped for the system prompt
 	Subagents     *subagent.Registry
-	Version       string // running binary version, for /update-arnes
-	Repo          string // GitHub owner/name the self-updater pulls from
+	Version       string      // running binary version, for /update-arnes
+	Repo          string      // GitHub owner/name the self-updater pulls from
+	Todos         *todo.Store // task checklist; persisted per session and restored on resume
 }
 
 // App holds the machinery to (re)build a conversation and owns the live one. It
@@ -98,6 +100,7 @@ type App struct {
 	version       string
 	repo          string
 
+	todos           *todo.Store
 	sess            *session.Session
 	ag              *agent.Agent
 	conv            *session.Persisting
@@ -131,6 +134,7 @@ func New(d Deps) *App {
 		subagents:     d.Subagents,
 		version:       d.Version,
 		repo:          d.Repo,
+		todos:         d.Todos,
 	}
 }
 
@@ -248,7 +252,14 @@ func (a *App) rebuild(sess *session.Session, history []provider.Message) {
 
 	a.ag = agent.New(a.prov, a.tools, a.effectiveApprover(), opts...)
 	a.sess = sess
-	a.conv = session.NewPersisting(a.ag, a.store, sess, session.WithModelFn(func() string { return a.prov.Model() }))
+
+	popts := []session.PersistingOption{
+		session.WithModelFn(func() string { return a.prov.Model() }),
+	}
+	if a.todos != nil {
+		popts = append(popts, session.WithTodosFn(a.todos.Get))
+	}
+	a.conv = session.NewPersisting(a.ag, a.store, sess, popts...)
 }
 
 // FreshConversation implements command.FreshFactory: a bare agent with empty

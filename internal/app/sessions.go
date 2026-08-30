@@ -23,6 +23,9 @@ func (a *App) ResumeSession(id string) (string, error) {
 	}
 	a.usedIn, a.usedOut = s.UsageIn, s.UsageOut // continue the session's spend
 	a.rebuild(s, s.Messages)
+	if a.todos != nil {
+		a.todos.Set(s.Todos) // repopulate the checklist panel from disk
+	}
 	return fmt.Sprintf("reanudada %s (%d mensajes)", s.ID, len(s.Messages)), nil
 }
 
@@ -32,6 +35,9 @@ func (a *App) NewSession() (string, error) {
 	s := session.New(a.providerName, a.prov.Model(), cwd)
 	a.usedIn, a.usedOut = 0, 0
 	a.rebuild(s, nil)
+	if a.todos != nil {
+		a.todos.Set(nil) // a fresh session starts with an empty checklist
+	}
 	return "sesión nueva: " + s.ID, nil
 }
 

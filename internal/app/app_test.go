@@ -79,6 +79,41 @@ func TestListSubagents(t *testing.T) {
 	}
 }
 
+func TestResumeRestoresChecklistIntoStore(t *testing.T) {
+	a := newTestApp(t)
+	todos := todo.NewStore()
+	a.todos = todos
+
+	if _, err := a.NewSession(); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	id := a.sess.ID
+	a.sess.Todos = []todo.Item{
+		{Content: "hecha", Status: todo.Done},
+		{Content: "a medias", Status: todo.InProgress},
+	}
+	if err := a.store.Save(a.sess); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fresh session must clear the panel...
+	if _, err := a.NewSession(); err != nil {
+		t.Fatal(err)
+	}
+	if len(todos.Get()) != 0 {
+		t.Fatalf("una sesión nueva debería limpiar el checklist, quedó %+v", todos.Get())
+	}
+
+	// ...and resuming must repopulate it from disk.
+	if _, err := a.ResumeSession(id); err != nil {
+		t.Fatalf("ResumeSession: %v", err)
+	}
+	got := todos.Get()
+	if len(got) != 2 || got[0].Status != todo.Done || got[1].Content != "a medias" {
+		t.Fatalf("reanudar no restauró el checklist: %+v", got)
+	}
+}
+
 func TestNewAndResumeByPrefix(t *testing.T) {
 	a := newTestApp(t)
 

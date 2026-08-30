@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/MauricioJC3/arnes_ng/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/todo"
 )
 
 // Agent is the slice of the agent the persister needs.
@@ -24,6 +25,7 @@ type Persisting struct {
 	store   Store
 	sess    *Session
 	modelFn func() string
+	todosFn func() []todo.Item
 }
 
 // PersistingOption tunes a Persisting.
@@ -33,6 +35,12 @@ type PersistingOption func(*Persisting)
 // /model command). It is read on every save.
 func WithModelFn(f func() string) PersistingOption {
 	return func(p *Persisting) { p.modelFn = f }
+}
+
+// WithTodosFn keeps sess.Todos current with the live task checklist. It is read
+// on every save, so the last turn before a quit already has the list on disk.
+func WithTodosFn(f func() []todo.Item) PersistingOption {
+	return func(p *Persisting) { p.todosFn = f }
 }
 
 // NewPersisting wraps agent so every turn is written to store under sess.
@@ -62,6 +70,9 @@ func (p *Persisting) Run(ctx context.Context, userInput string) (string, error) 
 		if m := p.modelFn(); m != "" {
 			p.sess.Model = m
 		}
+	}
+	if p.todosFn != nil {
+		p.sess.Todos = p.todosFn()
 	}
 
 	if saveErr := p.store.Save(p.sess); saveErr != nil {

@@ -101,6 +101,37 @@ func TestTodoPanelRendersEveryStatus(t *testing.T) {
 	}
 }
 
+func TestTodoPanelHidesWhenAllDone(t *testing.T) {
+	m := modelWithTodos(t)
+	items := []todo.Item{
+		{Content: "diseñar", Status: todo.Done},
+		{Content: "implementar", Status: todo.Done},
+	}
+	tm, _ := m.Update(todosMsg(items))
+	m = tm.(Model)
+
+	if got := m.visibleTodos(); got != 0 {
+		t.Fatalf("con todas las tareas hechas visibleTodos = %d, quiero 0", got)
+	}
+	if strings.Contains(m.View(), "tareas") {
+		t.Fatalf("el panel debería desaparecer cuando están todas hechas:\n%s", m.View())
+	}
+}
+
+func TestTodoPanelStaysWhileSomePending(t *testing.T) {
+	m := modelWithTodos(t)
+	items := []todo.Item{
+		{Content: "hecha", Status: todo.Done},
+		{Content: "pendiente", Status: todo.Pending},
+	}
+	tm, _ := m.Update(todosMsg(items))
+	m = tm.(Model)
+
+	if got := m.visibleTodos(); got != 2 {
+		t.Fatalf("con una pendiente el panel debe seguir visible; visibleTodos = %d", got)
+	}
+}
+
 func TestTodoPanelTruncatesLongList(t *testing.T) {
 	m := modelWithTodos(t)
 	var items []todo.Item
