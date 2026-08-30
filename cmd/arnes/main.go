@@ -227,7 +227,7 @@ func run() error {
 		Streaming:     streaming,
 		Deltas:        deltas,
 		Activity:      activity,
-		Checkpoints:   checkpoint.NewStore(),
+		Checkpoints:   checkpoint.NewStore(checkpoint.WithWorkdir(cwd)),
 		Mem:           mem,
 		Rules:         rulesWrapped,
 		Subagents:     subReg,

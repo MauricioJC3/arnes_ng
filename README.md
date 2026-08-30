@@ -55,9 +55,13 @@ que lo envuelve.
   disponibles junto a las nativas; las dos cosas conviven.
 - **Checkpoints / rewind**: antes de cada turno se toma un punto de restauración
   (historial + contenido previo de los archivos que el turno toque con
-  `write_file` / `edit_file`). `/rewind` lista los checkpoints; `/rewind n` vuelve
-  al checkpoint `n`: reescribe los archivos y recorta el historial. Viven en
-  memoria durante el proceso; los cambios hechos por `bash` no se rastrean.
+  `write_file` / `edit_file`). Si el turno corre `bash` dentro de un repo git,
+  además se guarda un baseline (`git stash create`, o `HEAD` si el árbol estaba
+  limpio). `/rewind` lista los checkpoints; `/rewind n` vuelve al checkpoint `n`:
+  reescribe los archivos, resetea los archivos versionados al baseline con
+  `git checkout` — lo que también descarta otros cambios sin commitear en
+  archivos versionados — y recorta el historial. Los archivos nuevos quedan.
+  Viven en memoria durante el proceso.
 - **Compactación de contexto**: `sliding` (default), `summarize` u `off`, con umbral de tokens,
   para que una sesión larga no infle el contexto ni empuje al modelo a loops.
 - **Subagentes**: delegación a agentes especializados (`research`, `test-writer`),
