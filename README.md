@@ -59,7 +59,8 @@ que lo envuelve.
   disponibles y carga el cuerpo del que elija dentro del turno. En cada arranque
   arnes se asegura de que un set curado que viene en el binario (`docker`,
   `docker-compose`, `software-architecture`, `architecture-review`,
-  `tdd-workflow`, `distinctive-web-design`) esté en `~/.arnes/skills`: agrega solo los que falten, sin
+  `tdd-workflow`, `testing-strategy`, `api-design`, `distinctive-web-design`) esté
+  en `~/.arnes/skills`: agrega solo los que falten, sin
   preguntar. Si editás uno, tu versión queda (no se sobreescribe); si borrás uno,
   vuelve en el próximo arranque. Tus propios skills no se tocan. Atribución de
   las fuentes en `internal/skill/defaults/NOTICE.md`.
