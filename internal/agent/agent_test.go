@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/MauricioJC3/arnes_ng/internal/approval"
 	"github.com/MauricioJC3/arnes_ng/internal/provider"
@@ -375,6 +376,102 @@ func TestAgentRun(t *testing.T) {
 			t.Fatalf("historial mal reconstruido: %+v", sent)
 		}
 	})
+}
+
+func TestRunCapsOversizedToolResult(t *testing.T) {
+	ctx := context.Background()
+	huge := strings.Repeat("y", 1_000_000)
+	ft := &fakeTool{name: "dump", out: huge}
+	p := provider.NewMock(
+		provider.Response{
+			ToolCalls:  []provider.ToolCall{{ID: "c1", Name: "dump", Input: json.RawMessage(`{}`)}},
+			StopReason: provider.StopToolUse,
+		},
+		provider.Response{Text: "listo", StopReason: provider.StopEndTurn},
+	)
+	a := newAgent(p, approval.AllowAll{}, ft)
+
+	if _, err := a.Run(ctx, "volcá todo"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The tool result stored in history is capped, not the raw megabyte.
+	var got string
+	for _, m := range a.History() {
+		for _, tr := range m.ToolResults {
+			if tr.CallID == "c1" {
+				got = tr.Content
+			}
+		}
+	}
+	if got == "" {
+		t.Fatal("no se encontró el resultado de la tool en el historial")
+	}
+	if len(got) >= len(huge) {
+		t.Fatalf("el resultado no se recortó: %d bytes", len(got))
+	}
+	if len(got) > DefaultMaxToolResult+500 {
+		t.Fatalf("el recorte no respetó el tope: %d bytes", len(got))
+	}
+	if !strings.Contains(got, "recortó") {
+		t.Fatalf("falta la marca de recorte:\n%s", got[:200])
+	}
+	// The provider's second call saw the capped version too.
+	last := p.Calls[1].Messages[len(p.Calls[1].Messages)-1]
+	if len(last.ToolResults) == 0 || len(last.ToolResults[0].Content) >= len(huge) {
+		t.Fatal("el provider recibió el resultado sin recortar")
+	}
+}
+
+func TestCapToolResultStaysValidUTF8(t *testing.T) {
+	a := &Agent{maxToolResult: 10}
+	got := a.capToolResult(strings.Repeat("€", 40)) // 3 bytes each -> the byte cut lands mid-rune
+	if !utf8.ValidString(got) {
+		t.Fatalf("capToolResult dejó UTF-8 inválido: %q", got)
+	}
+}
+
+func TestRunEmergencyCompactionOverContextGuard(t *testing.T) {
+	ctx := context.Background()
+	spy := &spyCompactor{}
+	p := provider.NewMock(provider.Response{Text: "ok", StopReason: provider.StopEndTurn})
+	a := New(p, tool.NewRegistry(), approval.AllowAll{},
+		WithHistory([]provider.Message{{Role: provider.RoleUser, Text: strings.Repeat("x", 40_000)}}), // ~10k tokens
+		WithCompactor(spy),
+		WithContextGuard(2_000))
+
+	if _, err := a.Run(ctx, "seguimos"); err != nil {
+		t.Fatal(err)
+	}
+	if spy.calls != 1 {
+		t.Fatalf("compactor de emergencia llamado %d veces, quiero 1", spy.calls)
+	}
+	if sent := p.Calls[0].Messages; len(sent) == 0 || sent[0].Text != "[compactado]" {
+		t.Fatalf("el provider no recibió el historial compactado: %+v", sent)
+	}
+}
+
+func TestRunStopsCleanlyWhenContextUnrecoverable(t *testing.T) {
+	ctx := context.Background()
+	p := provider.NewMock(provider.Response{Text: "no debería llegar", StopReason: provider.StopEndTurn})
+	// One oversized message + the None compactor: sliding-window fallback has
+	// nothing safe to drop, so the turn must stop with an IncompleteError.
+	a := New(p, tool.NewRegistry(), approval.AllowAll{},
+		WithHistory([]provider.Message{{Role: provider.RoleUser, Text: strings.Repeat("x", 40_000)}}),
+		WithContextGuard(2_000))
+
+	_, err := a.Run(ctx, "seguimos")
+
+	var inc *provider.IncompleteError
+	if !errors.As(err, &inc) {
+		t.Fatalf("esperaba IncompleteError, dio %v", err)
+	}
+	if len(p.Calls) != 0 {
+		t.Fatalf("no debería haber llamado al provider, hubo %d llamadas", len(p.Calls))
+	}
+	if len(a.History()) == 0 {
+		t.Fatal("el historial debería quedar guardado para /compact o seguí")
+	}
 }
 
 // spyCompactor records calls and drops the history to a single marker message.

@@ -2,10 +2,19 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/glamour"
 )
+
+// deltaFlushInterval is the shortest gap between viewport re-renders while text
+// is streaming. appendDelta always records the incoming chunk right away, but
+// re-rendering the whole transcript on every token is what stalled the Bubble
+// Tea event loop on long turns (and, with the delta channel backed up behind it,
+// wedged Ctrl+C). Chunks that arrive inside this window are coalesced and shown
+// by the next flush. Package var so tests can pin it.
+var deltaFlushInterval = 40 * time.Millisecond
 
 // entryKind classifies a transcript line for styling.
 type entryKind int
@@ -15,6 +24,7 @@ const (
 	kindAssistant
 	kindInfo
 	kindError
+	kindActivity // a dim "the agent just ran tool X" status line
 )
 
 type entry struct {
@@ -32,6 +42,9 @@ type transcript struct {
 	vp      viewport.Model
 	entries []entry
 	live    string // streamed text for the current turn, not yet committed
+
+	liveDirty bool      // live changed since the last render; a flush is owed
+	lastFlush time.Time // when the live buffer was last rendered to the viewport
 
 	styles  Styles
 	mdStyle string // glamour style name; never "auto" (that queries the terminal)
@@ -72,23 +85,46 @@ func (t *transcript) add(k entryKind, text string) {
 // commitLive moves the streamed text of this turn into a permanent entry.
 func (t *transcript) commitLive() {
 	if t.live == "" {
+		t.liveDirty = false
 		return
 	}
 	t.add(kindAssistant, t.live)
 	t.live = ""
+	t.liveDirty = false
 }
 
-// appendDelta adds one streamed chunk to the in-flight text, keeping the
-// viewport pinned to the bottom only if it was already there.
+// appendDelta records one streamed chunk. The first chunk of a burst renders at
+// once; chunks that follow within deltaFlushInterval are coalesced -- they land
+// in t.live immediately but the viewport re-render is left to the next
+// flushLive() (driven by a timer in Update). This keeps a fast token stream from
+// rebuilding the whole transcript on every token.
 func (t *transcript) appendDelta(s string) {
-	atBottom := !t.ready || t.vp.AtBottom()
 	t.live += s
+	t.liveDirty = true
+	if time.Since(t.lastFlush) < deltaFlushInterval {
+		return
+	}
+	t.flushLive()
+}
+
+// flushLive renders the buffered streamed text if a flush is owed, keeping the
+// viewport pinned to the bottom only if it was already there.
+func (t *transcript) flushLive() {
+	if !t.liveDirty {
+		return
+	}
+	atBottom := !t.ready || t.vp.AtBottom()
+	t.liveDirty = false
+	t.lastFlush = time.Now()
 	t.setContent(atBottom)
 }
 
 // dropLive discards the partial streamed buffer (the result text is
 // authoritative).
-func (t *transcript) dropLive() { t.live = "" }
+func (t *transcript) dropLive() {
+	t.live = ""
+	t.liveDirty = false
+}
 
 // reflow rebuilds every assistant entry through a fresh renderer, for use after
 // a width change.
@@ -175,6 +211,8 @@ func (t *transcript) renderEntry(e entry, w int) string {
 		return wrapTo(t.styles.Assistant.Render(e.text), w)
 	case kindError:
 		return wrapTo(t.styles.Error.Render("✗ "+e.text), w)
+	case kindActivity:
+		return wrapTo(t.styles.Accent.Render("⚙ ")+t.styles.Muted.Render(e.text), w)
 	default: // kindInfo
 		return wrapTo(t.styles.Muted.Render(e.text), w)
 	}

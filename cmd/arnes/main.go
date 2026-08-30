@@ -11,6 +11,8 @@
 //	ARNES_COMPACT_AT    token threshold for auto-compaction (default 120000)
 //	ARNES_MAX_STEPS     tool round-trips allowed per turn (default 50)
 //	ARNES_MAX_TOKENS    output-token cap per model call (default 8192)
+//	ARNES_MAX_TOOL_OUTPUT  byte cap on one tool result before its middle is elided (default 200000)
+//	ARNES_CONTEXT_GUARD   estimated-token ceiling that forces a mid-turn compaction (default 150000)
 //	ARNES_SUBAGENTS     path to a subagents JSON file (default ~/.arnes/subagents.json)
 //	ARNES_SKILLS        path to the global skills directory (default ~/.arnes/skills)
 //	ARNES_MCP           path to an mcp.json file (default ~/.arnes/mcp.json)
@@ -140,12 +142,32 @@ func run() error {
 		return err
 	}
 
+	// Safety nets against a single turn overflowing the model's context window:
+	// a byte cap per tool result, and an estimated-token ceiling that forces a
+	// mid-turn compaction. Both fall back to the agent's own defaults when 0.
+	maxToolOut, err := positiveIntFromEnv("ARNES_MAX_TOOL_OUTPUT")
+	if err != nil {
+		return err
+	}
+	contextGuard, err := positiveIntFromEnv("ARNES_CONTEXT_GUARD")
+	if err != nil {
+		return err
+	}
+
 	// A once-a-day background check for a newer release. It never blocks startup;
 	// the result (if any) is surfaced on notices.
 	notices := make(chan string, 1)
 	go checkForUpdate(cfg.AutoUpdate || isTruthy(os.Getenv("ARNES_AUTO_UPDATE")), notices)
 
 	approver, approvals, deltas := buildApprover(uiMode, streaming, stdin, os.Stdout)
+
+	// The tool-activity feed: the agent's pre-execute observer pushes a short
+	// line per tool call, the TUI renders them dim in the transcript. Buffered
+	// and drop-on-full (see App.emitActivity), TUI only.
+	var activity chan string
+	if uiMode == "tui" {
+		activity = make(chan string, 128)
+	}
 
 	// The task checklist: the model keeps it via todo_write, the TUI renders it
 	// live. A buffered, latest-wins channel decouples the two goroutines.
@@ -199,8 +221,11 @@ func run() error {
 		CompactAt:     compactAt,
 		MaxSteps:      maxSteps,
 		MaxTokens:     maxTokens,
+		MaxToolResult: maxToolOut,
+		ContextGuard:  contextGuard,
 		Streaming:     streaming,
 		Deltas:        deltas,
+		Activity:      activity,
 		Checkpoints:   checkpoint.NewStore(),
 		Mem:           mem,
 		Rules:         rulesWrapped,
@@ -271,6 +296,7 @@ func run() error {
 			},
 			Approvals: approvals,
 			Deltas:    deltas,
+			Activity:  activity,
 			Notices:   notices,
 			Todos:     todos,
 			Theme:     theme,

@@ -243,6 +243,21 @@ func maxTokensFromEnv(cfg config.Config) (int, error) {
 	return cfg.MaxTokens, nil
 }
 
+// positiveIntFromEnv reads an optional positive integer from the named env var.
+// Unset returns 0 (the caller's "use the default" signal); a non-numeric or
+// non-positive value is an error.
+func positiveIntFromEnv(name string) (int, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s inválido: %q", name, raw)
+	}
+	return n, nil
+}
+
 // isFalsey reports whether s is an explicit "off" value.
 func isFalsey(s string) bool {
 	switch strings.ToLower(strings.TrimSpace(s)) {

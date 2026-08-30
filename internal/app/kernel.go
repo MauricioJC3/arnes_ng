@@ -54,8 +54,11 @@ type Deps struct {
 	CompactAt     int
 	MaxSteps      int // tool round-trips per turn; <=0 uses agent.DefaultMaxSteps
 	MaxTokens     int // output-token cap per model call; <=0 uses agent.DefaultMaxTokens
+	MaxToolResult int // byte cap on one tool result; <=0 uses agent.DefaultMaxToolResult
+	ContextGuard  int // emergency token ceiling for mid-turn compaction; <=0 uses agent.DefaultContextGuard
 	Streaming     bool
 	Deltas        chan string
+	Activity      chan string       // live "what the agent is doing" lines (tool calls); nil to disable
 	Hooks         agent.Hooks       // pre/post tool-call hooks; nil when none configured
 	Checkpoints   *checkpoint.Store // per-turn restore points for /rewind
 	Mem           memory.Store      // project-scoped persistent memory (for the prompt digest)
@@ -82,8 +85,12 @@ type App struct {
 	compactAt     int
 	maxSteps      int
 	maxTokens     int
+	maxToolResult int
+	contextGuard  int
 	streaming     bool
 	deltas        chan string
+	activity      chan string     // live tool-activity lines for the TUI; nil disables the feed
+	turnCtx       context.Context // the in-flight turn's context; set by Run, read by emitDelta
 	hooks         agent.Hooks
 	checkpoints   *checkpoint.Store
 	mem           memory.Store
@@ -112,8 +119,11 @@ func New(d Deps) *App {
 		compactAt:     d.CompactAt,
 		maxSteps:      cmp.Or(d.MaxSteps, agent.DefaultMaxSteps),
 		maxTokens:     cmp.Or(d.MaxTokens, agent.DefaultMaxTokens),
+		maxToolResult: d.MaxToolResult, // 0 -> agentOptions skips it, agent.New applies its own default
+		contextGuard:  d.ContextGuard,  // 0 -> agentOptions skips it, agent.New applies its own default
 		streaming:     d.Streaming,
 		deltas:        d.Deltas,
+		activity:      d.Activity,
 		hooks:         d.Hooks,
 		checkpoints:   d.Checkpoints,
 		mem:           d.Mem,
@@ -178,19 +188,49 @@ func (a *App) agentOptions() []agent.Option {
 	if a.maxTokens > 0 {
 		opts = append(opts, agent.WithMaxTokens(a.maxTokens))
 	}
+	if a.maxToolResult > 0 {
+		opts = append(opts, agent.WithMaxToolResult(a.maxToolResult))
+	}
+	if a.contextGuard > 0 {
+		opts = append(opts, agent.WithContextGuard(a.contextGuard))
+	}
 	if a.hooks != nil {
 		opts = append(opts, agent.WithHooks(a.hooks))
 	}
-	if a.checkpoints != nil {
-		opts = append(opts, agent.WithToolObserver(a.checkpoints.Observe))
+	if obs := a.toolObserver(); obs != nil {
+		opts = append(opts, agent.WithToolObserver(obs))
 	}
 	if a.streaming {
 		opts = append(opts, agent.WithStreaming(true))
 		if a.deltas != nil {
-			opts = append(opts, agent.WithDeltaFn(func(s string) { a.deltas <- s }))
+			opts = append(opts, agent.WithDeltaFn(a.emitDelta))
 		}
 	}
 	return opts
+}
+
+// emitDelta forwards one streamed text chunk to the TUI without ever wedging the
+// agent turn. It is called synchronously on the turn goroutine (Run ->
+// agent.Run -> StreamMessage -> onDelta), the same goroutine that sets turnCtx,
+// so the field read below needs no synchronization.
+//
+// A plain `a.deltas <- s` is what froze long turns: once the TUI stalled and the
+// buffer filled, the send parked forever, and Ctrl+C (which only cancels the
+// context) could not free it. Selecting on turnCtx.Done() means a cancelled turn
+// always unblocks. A chunk lost this way is cosmetic -- the final response text
+// is authoritative and replaces the live preview.
+func (a *App) emitDelta(s string) {
+	if a.turnCtx == nil {
+		select {
+		case a.deltas <- s:
+		default:
+		}
+		return
+	}
+	select {
+	case a.deltas <- s:
+	case <-a.turnCtx.Done():
+	}
 }
 
 // rebuild swaps in a fresh agent + persister for the given session/history. It
@@ -222,6 +262,7 @@ func (a *App) FreshConversation() command.Conversation {
 // to the live conversation, and keeps the session's cumulative token usage in
 // sync with the agent.
 func (a *App) Run(ctx context.Context, in string) (string, error) {
+	a.turnCtx = ctx // so emitDelta can bail on Ctrl+C instead of parking on a full channel
 	if a.checkpoints != nil {
 		a.checkpoints.Begin(a.ag.History(), in)
 	}

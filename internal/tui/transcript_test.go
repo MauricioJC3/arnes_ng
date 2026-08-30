@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func newTranscript() *transcript {
@@ -33,6 +34,56 @@ func TestTranscriptCommitLiveMovesStreamedText(t *testing.T) {
 	tr.commitLive() // sin texto en vuelo: no-op
 	if len(tr.entries) != 1 {
 		t.Fatalf("commitLive sin live agregó una entry: %+v", tr.entries)
+	}
+}
+
+func TestTranscriptAppendDeltaCoalescesRendersWithinInterval(t *testing.T) {
+	prev := deltaFlushInterval
+	deltaFlushInterval = time.Hour // force every follow-up chunk to coalesce
+	defer func() { deltaFlushInterval = prev }()
+
+	tr := newTranscript()
+
+	tr.appendDelta("primero ") // first chunk of the turn: renders immediately
+	if !strings.Contains(tr.vp.View(), "primero") {
+		t.Fatal("el primer chunk debería renderizarse de inmediato")
+	}
+
+	tr.appendDelta("segundo") // within the interval: buffered, viewport untouched
+	if strings.Contains(tr.vp.View(), "segundo") {
+		t.Fatal("un chunk dentro del intervalo no debería re-renderizar el viewport")
+	}
+	if !tr.liveDirty {
+		t.Fatal("el chunk coalescido debería dejar liveDirty en true")
+	}
+	if tr.live != "primero segundo" {
+		t.Fatalf("live = %q, esperaba %q", tr.live, "primero segundo")
+	}
+
+	tr.flushLive() // the timer tick in Update calls this
+	if !strings.Contains(tr.vp.View(), "segundo") {
+		t.Fatal("flushLive debería volcar el texto pendiente al viewport")
+	}
+	if tr.liveDirty {
+		t.Fatal("flushLive debería limpiar liveDirty")
+	}
+}
+
+func TestTranscriptDropLiveClearsPendingFlush(t *testing.T) {
+	prev := deltaFlushInterval
+	deltaFlushInterval = time.Hour
+	defer func() { deltaFlushInterval = prev }()
+
+	tr := newTranscript()
+	tr.appendDelta("uno")  // renders
+	tr.appendDelta("+dos") // buffered, liveDirty
+	if !tr.liveDirty {
+		t.Fatal("precondición: debería haber un flush pendiente")
+	}
+
+	tr.dropLive()
+	if tr.live != "" || tr.liveDirty {
+		t.Fatalf("dropLive debería limpiar live (%q) y liveDirty (%v)", tr.live, tr.liveDirty)
 	}
 }
 

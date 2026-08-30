@@ -22,6 +22,7 @@ type Options struct {
 	Cost       func() string
 	Approvals  chan approval.Request
 	Deltas     chan string
+	Activity   chan string      // live "what the agent is doing" lines (tool calls); nil to disable
 	Notices    chan string      // out-of-band lines (e.g. "update available"); nil to disable
 	Todos      chan []todo.Item // live task checklist; nil to disable the panel
 	Theme      Theme
@@ -40,6 +41,7 @@ func Run(o Options) error {
 		Cost:          o.Cost,
 		Approvals:     o.Approvals,
 		Deltas:        o.Deltas,
+		Activity:      o.Activity,
 		Notices:       o.Notices,
 		Todos:         o.Todos,
 		Theme:         o.Theme,

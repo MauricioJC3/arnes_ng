@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/MauricioJC3/arnes_ng/internal/approval"
 	"github.com/MauricioJC3/arnes_ng/internal/compact"
@@ -32,6 +33,9 @@ type Agent struct {
 
 	stream  bool
 	onDelta func(string) // text deltas when streaming
+
+	maxToolResult int // byte cap on a single tool result fed back to the model; 0 disables
+	contextGuard  int // token ceiling that forces an emergency compaction mid-turn; 0 disables
 
 	usedIn, usedOut int // cumulative token usage for this agent
 }
@@ -78,6 +82,30 @@ const DefaultMaxSteps = 50
 // gives up. This is the guard against a model that never stops asking for tools.
 func WithMaxSteps(n int) Option { return func(a *Agent) { a.maxSteps = n } }
 
+// DefaultMaxToolResult is the byte cap on a single tool result before the middle
+// is elided. One uncapped read_file or bash (a big generated file, a verbose
+// build log) can drop hundreds of KB into an immutable history message and, a
+// few of those in, blow past the model's context window -- which no sliding
+// compaction can undo because the giant message is recent. ~200 KB is ~50k
+// tokens: plenty for a real file, far short of an overflow.
+const DefaultMaxToolResult = 200_000
+
+// WithMaxToolResult sets the byte cap on a single tool result (ARNES_MAX_TOOL_OUTPUT).
+// n <= 0 disables the cap.
+func WithMaxToolResult(n int) Option { return func(a *Agent) { a.maxToolResult = n } }
+
+// DefaultContextGuard is the estimated-token ceiling that trips an emergency
+// compaction inside the loop, regardless of the auto-compaction threshold (or
+// whether auto-compaction is on at all). It sits above the default 120k
+// compaction threshold and below a 200k-context model's limit, so a turn that
+// balloons mid-flight gets shrunk -- or fails cleanly with the history saved --
+// instead of every subsequent provider call returning HTTP 400.
+const DefaultContextGuard = 150_000
+
+// WithContextGuard sets the emergency token ceiling (ARNES_CONTEXT_GUARD).
+// n <= 0 disables it.
+func WithContextGuard(n int) Option { return func(a *Agent) { a.contextGuard = n } }
+
 // WithHistory seeds the conversation with prior messages, for session resume.
 // The slice is copied, so the caller keeps ownership of theirs.
 func WithHistory(h []provider.Message) Option {
@@ -122,13 +150,15 @@ func WithUsage(in, out int) Option {
 // compaction.
 func New(p provider.Provider, tools *tool.Registry, ap approval.Approver, opts ...Option) *Agent {
 	a := &Agent{
-		provider:  p,
-		tools:     tools,
-		approver:  ap,
-		maxTokens: DefaultMaxTokens,
-		maxSteps:  DefaultMaxSteps,
-		compactor: compact.None{},
-		warn:      func(error) {},
+		provider:      p,
+		tools:         tools,
+		approver:      ap,
+		maxTokens:     DefaultMaxTokens,
+		maxSteps:      DefaultMaxSteps,
+		maxToolResult: DefaultMaxToolResult,
+		contextGuard:  DefaultContextGuard,
+		compactor:     compact.None{},
+		warn:          func(error) {},
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -189,6 +219,54 @@ func (a *Agent) maybeCompact(ctx context.Context) {
 	a.history = compacted
 }
 
+// guardContext is the emergency valve against a turn that overflows the model's
+// context window mid-flight (many steps, big tool results): every provider call
+// after the overflow would just return HTTP 400. When the estimated history
+// exceeds contextGuard it compacts NOW -- with the configured strategy, or a
+// sliding window when none is set -- ignoring the normal auto-compaction
+// threshold. If that still isn't enough (a single oversized message, or nothing
+// to drop) it returns an IncompleteError so Run stops with the history intact
+// and the user can /compact, /new, or raise ARNES_CONTEXT_GUARD.
+func (a *Agent) guardContext(ctx context.Context) error {
+	if a.contextGuard <= 0 || compact.EstimateTokens(a.history) <= a.contextGuard {
+		return nil
+	}
+
+	strat := a.compactor
+	if strat == nil || strat.Name() == (compact.None{}).Name() {
+		strat = compact.SlidingWindow{}
+	}
+	if compacted, err := strat.Compact(ctx, a.history); err == nil {
+		a.history = compacted
+	} else {
+		a.warn(fmt.Errorf("compactación de emergencia (%s) falló: %w", strat.Name(), err))
+	}
+
+	if compact.EstimateTokens(a.history) > a.contextGuard {
+		return &provider.IncompleteError{Reason: fmt.Sprintf("el historial superó el límite de contexto de seguridad (~%d tokens) y no se pudo "+
+			"compactar lo suficiente -- usá /compact (probá la estrategia \"summarize\"), /new, o subí ARNES_CONTEXT_GUARD; el historial quedó guardado",
+			a.contextGuard)}
+	}
+	return nil
+}
+
+// capToolResult elides the middle of an oversized tool result so one huge
+// read_file or bash output can't push the history past the context window. Head
+// and tail are both kept -- a build or test log puts the failure at the end.
+func (a *Agent) capToolResult(s string) string {
+	if a.maxToolResult <= 0 || len(s) <= a.maxToolResult {
+		return s
+	}
+	head := a.maxToolResult * 3 / 5
+	tail := a.maxToolResult - head
+	omitted := len(s) - head - tail
+	out := s[:head] +
+		fmt.Sprintf("\n\n[... el arnés recortó %d caracteres del medio de esta salida para no desbordar el contexto; "+
+			"si necesitás lo omitido, pedí un rango más chico o filtrá la salida ...]\n\n", omitted) +
+		s[len(s)-tail:]
+	return strings.ToValidUTF8(out, "") // drop any rune split by the byte cut
+}
+
 // maxTruncationRetries is how many times in a row Run will nudge the model to
 // continue after its output was cut by the token limit before it gives up and
 // hands back the partial answer with an explanation.
@@ -211,6 +289,12 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 	callCounts := map[string]int{} // identical tool call -> times seen this turn
 
 	for step := 0; step < a.maxSteps; step++ {
+		// Emergency context compaction: a turn that balloons past the model's
+		// window mid-flight would otherwise 400 on every remaining call.
+		if err := a.guardContext(ctx); err != nil {
+			return lastText, err
+		}
+
 		req := provider.Request{
 			System:    a.system,
 			Messages:  a.history,
@@ -371,6 +455,7 @@ func (a *Agent) runTool(ctx context.Context, call provider.ToolCall) (res provid
 			res.Content += "\n\n[hook] " + note
 		}
 	}
+	res.Content = a.capToolResult(res.Content)
 	return res
 }
 
