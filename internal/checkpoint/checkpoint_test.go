@@ -82,13 +82,19 @@ func TestObserveCapturesOncePerFile(t *testing.T) {
 }
 
 func TestObserveIgnoresNonWriteTools(t *testing.T) {
-	s := NewStore()
+	// workdir a un directorio sin git: bash no captura baseline y nada más
+	// captura archivos.
+	s := NewStore(WithWorkdir(t.TempDir()))
 	s.Begin(nil, "t")
 	in, _ := json.Marshal(map[string]string{"path": "x"})
 	s.Observe(provider.ToolCall{Name: "bash", Input: in})
 	s.Observe(provider.ToolCall{Name: "read_file", Input: in})
-	if cp := s.List()[0]; cp.Files() != 0 {
-		t.Fatalf("no debería capturar nada para bash/read_file, capturó %d", cp.Files())
+	cp := s.List()[0]
+	if cp.Files() != 0 {
+		t.Fatalf("no debería capturar archivos para bash/read_file, capturó %d", cp.Files())
+	}
+	if cp.git != nil {
+		t.Fatal("fuera de un repo git no debería haber baseline")
 	}
 }
 
