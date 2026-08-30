@@ -55,6 +55,7 @@ import (
 	"github.com/MauricioJC3/arnes_ng/internal/session"
 	"github.com/MauricioJC3/arnes_ng/internal/skill"
 	"github.com/MauricioJC3/arnes_ng/internal/subagent"
+	"github.com/MauricioJC3/arnes_ng/internal/tool"
 	"github.com/MauricioJC3/arnes_ng/internal/tui"
 )
 
@@ -247,6 +248,7 @@ func run() error {
 		LSPMgr: lspMgr,
 		Skills: skillReg,
 		Mem:    mem,
+		Files:  tool.NewFileTracker(),
 	})
 
 	mcpTools := 0

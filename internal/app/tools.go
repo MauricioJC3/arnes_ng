@@ -16,6 +16,7 @@ type BaseToolDeps struct {
 	LSPMgr *lsp.Manager
 	Skills *skill.Registry
 	Mem    memory.Store
+	Files  *tool.FileTracker // read-before-write guard; nil disables it
 }
 
 // BuildBaseTools assembles the tool pool shared by the agent and its subagents
@@ -26,9 +27,9 @@ func BuildBaseTools(d BaseToolDeps) *tool.Registry {
 		tool.Bash{Timeout: tool.DefaultBashTimeout},
 		tool.Grep{},
 		tool.Glob{},
-		tool.ReadFile{},
-		tool.WriteFile{},
-		tool.EditFile{},
+		tool.ReadFile{Tracker: d.Files},
+		tool.WriteFile{Tracker: d.Files},
+		tool.EditFile{Tracker: d.Files},
 		tool.TodoWrite{Store: d.Todos},
 		tool.LSP{Client: func(ctx context.Context, path string) (tool.LSPClient, error) {
 			return d.LSPMgr.For(ctx, path)

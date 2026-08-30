@@ -37,6 +37,9 @@ que lo envuelve.
   tarea original de la sesión y la checklist viva quedan ancladas al system
   prompt (la compactación no las toca), y si el modelo cierra con tareas sin
   completar recibe un aviso para terminarlas o justificarlas.
+- **Leer antes de escribir**: `edit_file` / `write_file` sobre un archivo que ya
+  existe y que el modelo no leyó esta sesión se rechaza — tiene que pasar por
+  `read_file` primero. Crear un archivo nuevo no necesita lectura previa.
 - **Reglas del proyecto**: si hay un `AGENTS.md` (o `agent.md` / `.arnes/agent.md`)
   en el directorio, su contenido se inyecta al system prompt.
 - **Costo en vivo e historial**: la barra de estado muestra el gasto acumulado de
