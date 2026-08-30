@@ -243,6 +243,21 @@ func maxTokensFromEnv(cfg config.Config) (int, error) {
 	return cfg.MaxTokens, nil
 }
 
+// providerRetriesFromEnv reads ARNES_PROVIDER_RETRIES. Unset returns -1 (the
+// "use the agent default" signal so 0 stays meaningful as "disable retry"); a
+// non-numeric or negative value is an error.
+func providerRetriesFromEnv() (int, error) {
+	raw := os.Getenv("ARNES_PROVIDER_RETRIES")
+	if raw == "" {
+		return -1, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("ARNES_PROVIDER_RETRIES inválido: %q", raw)
+	}
+	return n, nil
+}
+
 // positiveIntFromEnv reads an optional positive integer from the named env var.
 // Unset returns 0 (the caller's "use the default" signal); a non-numeric or
 // non-positive value is an error.
