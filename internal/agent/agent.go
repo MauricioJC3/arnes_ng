@@ -37,6 +37,12 @@ type Agent struct {
 	maxToolResult int // byte cap on a single tool result fed back to the model; 0 disables
 	contextGuard  int // token ceiling that forces an emergency compaction mid-turn; 0 disables
 
+	// completion gate: a turn cannot end until these pass. See completionGate.
+	verifier    func(context.Context) (output string, ok bool) // project check (build/test/lint); nil disables it
+	anchorFn    func() string                                  // dynamic system-prompt suffix (original task + live plan); nil disables it
+	openTodosFn func() []string                                // labels of unfinished checklist items; nil disables the nudge
+	dirty       bool                                           // a mutating tool ran since the last passing verification
+
 	usedIn, usedOut int // cumulative token usage for this agent
 }
 
@@ -143,6 +149,28 @@ func WithDeltaFn(f func(string)) Option { return func(a *Agent) { a.onDelta = f 
 // session's running total.
 func WithUsage(in, out int) Option {
 	return func(a *Agent) { a.usedIn, a.usedOut = in, out }
+}
+
+// WithVerifier registers the project check the completion gate runs before a
+// turn is allowed to end, once a mutating tool has run. It returns the check's
+// output and whether it passed; on a failure the output is fed back to the model
+// and the turn continues. nil (the default) disables the gate.
+func WithVerifier(fn func(context.Context) (output string, ok bool)) Option {
+	return func(a *Agent) { a.verifier = fn }
+}
+
+// WithAnchorFn registers a function whose return value is appended to the system
+// prompt on every model call -- used to keep the original task and the live plan
+// in view even after compaction has dropped them from the history. nil disables it.
+func WithAnchorFn(fn func() string) Option {
+	return func(a *Agent) { a.anchorFn = fn }
+}
+
+// WithOpenTodosFn registers a function returning the labels of checklist items
+// that are not done. When a turn tries to end with any still open, the gate
+// nudges the model once to finish or account for them. nil disables the nudge.
+func WithOpenTodosFn(fn func() []string) Option {
+	return func(a *Agent) { a.openTodosFn = fn }
 }
 
 // New builds an Agent. provider, tools and approver are required; options tune
@@ -278,6 +306,11 @@ const maxTruncationRetries = 2
 // burns the whole step budget.
 const repeatCallLimit = 3
 
+// maxVerifyRetries bounds how many times the completion gate will bounce the
+// model back with a failing project check before it gives up and lets the turn
+// end with the partial answer (the failing output stays in the history).
+const maxVerifyRetries = 3
+
 // Run appends the user input to the history and drives the inner loop until the
 // model returns a final answer. It returns that final text.
 func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
@@ -287,6 +320,8 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 	var lastText string
 	truncations := 0               // consecutive max-token cutoffs (reset on any progress)
 	callCounts := map[string]int{} // identical tool call -> times seen this turn
+	verifyFails := 0               // consecutive failing project checks at the completion gate
+	todoNudged := false            // the unfinished-checklist nudge has fired this turn
 
 	for step := 0; step < a.maxSteps; step++ {
 		// Emergency context compaction: a turn that balloons past the model's
@@ -296,7 +331,7 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 		}
 
 		req := provider.Request{
-			System:    a.system,
+			System:    a.system + a.anchor(),
 			Messages:  a.history,
 			Tools:     a.toolDefs(),
 			MaxTokens: a.maxTokens,
@@ -358,6 +393,13 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 		truncations = 0
 
 		if resp.StopReason != provider.StopToolUse || len(resp.ToolCalls) == 0 {
+			// The model wants to end the turn. It only gets to if the completion
+			// gate agrees: the project check passes (once anything was edited) and
+			// no checklist item is left silently open.
+			if nudge, again := a.completionGate(ctx, &verifyFails, &todoNudged); again {
+				a.history = append(a.history, provider.Message{Role: provider.RoleUser, Text: nudge})
+				continue
+			}
 			return resp.Text, nil
 		}
 
@@ -450,6 +492,12 @@ func (a *Agent) runTool(ctx context.Context, call provider.ToolCall) (res provid
 		res.Content = out
 	}
 
+	// A mutating tool that ran means the workspace changed: the completion gate
+	// must re-verify before this turn is allowed to end.
+	if !res.IsError && isMutatingTool(call.Name) {
+		a.dirty = true
+	}
+
 	if a.hooks != nil {
 		if note := a.hooks.PostTool(ctx, call, res.Content, res.IsError); note != "" {
 			res.Content += "\n\n[hook] " + note
@@ -457,6 +505,57 @@ func (a *Agent) runTool(ctx context.Context, call provider.ToolCall) (res provid
 	}
 	res.Content = a.capToolResult(res.Content)
 	return res
+}
+
+// anchor returns the dynamic system-prompt suffix (original task + live plan),
+// or "" when no anchor function is set.
+func (a *Agent) anchor() string {
+	if a.anchorFn == nil {
+		return ""
+	}
+	return a.anchorFn()
+}
+
+// mutatingTools are the tool names that change the workspace, so a turn that ran
+// one must clear the completion gate's project check before it can end. bash is
+// included because a shell command is the usual way an unseen edit (sed, mv,
+// codegen) happens -- an extra check run on a read-only command is cheap.
+var mutatingTools = map[string]bool{"write_file": true, "edit_file": true, "bash": true}
+
+func isMutatingTool(name string) bool { return mutatingTools[name] }
+
+// completionGate is run when the model tries to end a turn. It returns a nudge
+// string and true when the turn must continue instead: the project check failed
+// (verifyFails is bumped, capped at maxVerifyRetries), or the checklist still
+// has open items (todoNudged flips, so this fires at most once per turn). When
+// it returns ("", false) the turn is free to end.
+func (a *Agent) completionGate(ctx context.Context, verifyFails *int, todoNudged *bool) (string, bool) {
+	if a.verifier != nil && a.dirty && *verifyFails < maxVerifyRetries {
+		out, ok := a.verifier(ctx)
+		switch {
+		case ok:
+			a.dirty = false
+			*verifyFails = 0
+		default:
+			*verifyFails++
+			if *verifyFails >= maxVerifyRetries {
+				a.warn(fmt.Errorf("la verificación del proyecto seguía fallando tras %d intentos; cierro el turno con el historial intacto", maxVerifyRetries))
+				break
+			}
+			return fmt.Sprintf("[arnés] La verificación del proyecto falló. Arreglala antes de terminar -- no "+
+				"digas que está listo con la verificación en rojo. Salida del check:\n\n%s", strings.TrimSpace(out)), true
+		}
+	}
+
+	if a.openTodosFn != nil && !*todoNudged {
+		if open := a.openTodosFn(); len(open) > 0 {
+			*todoNudged = true
+			return fmt.Sprintf("[arnés] Cerrás el turno con %d tarea(s) sin completar en tu checklist:\n- %s\n\n"+
+				"Terminalas ahora, o si alguna ya no aplica marcala como corresponde con todo_write y explicá por qué.",
+				len(open), strings.Join(open, "\n- ")), true
+		}
+	}
+	return "", false
 }
 
 // toolDefs projects the registry into the provider-facing tool definitions.

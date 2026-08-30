@@ -31,6 +31,12 @@ que lo envuelve.
   con `Ctrl+C`. Conviene combinarlo con el modo `auto`. `/goal --fresh <obj>` usa un
   agente nuevo con contexto vacío cada iteración (estado en archivos/git) — más
   barato para runs largos.
+- **Portón de cierre de turno**: un turno que editó algo no puede cerrarse hasta
+  que el comando de verificación (`ARNES_CHECK_CMD` / `check_command`) pase — si
+  falla, la salida vuelve al modelo y sigue (hasta 3 reintentos). Además, la
+  tarea original de la sesión y la checklist viva quedan ancladas al system
+  prompt (la compactación no las toca), y si el modelo cierra con tareas sin
+  completar recibe un aviso para terminarlas o justificarlas.
 - **Reglas del proyecto**: si hay un `AGENTS.md` (o `agent.md` / `.arnes/agent.md`)
   en el directorio, su contenido se inyecta al system prompt.
 - **Costo en vivo e historial**: la barra de estado muestra el gasto acumulado de
@@ -154,6 +160,7 @@ Las variables ganan sobre el archivo de config.
 | `ARNES_COMPACT_AT` | umbral de tokens para auto-compactar (default 120000) |
 | `ARNES_MAX_STEPS` | round-trips de herramientas por turno (default 50) |
 | `ARNES_MAX_TOKENS` | tope de tokens de salida por llamada al modelo (default 8192) |
+| `ARNES_CHECK_CMD` | comando de verificación del proyecto (ej. `go build ./... && go test ./...`); si un turno editó algo, el modelo no puede cerrarlo hasta que pase. Vacío lo desactiva; también se puede fijar en `check_command` en la config |
 | `ARNES_RESUME` | id (o prefijo) de sesión a reanudar al arrancar |
 | `ARNES_RULES` | ruta a un archivo de reglas del proyecto (default: `AGENTS.md` en el cwd) |
 | `ARNES_AUTO_UPDATE` | `on` para que el chequeo diario instale la versión nueva por su cuenta |
