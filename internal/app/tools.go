@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"time"
 
 	"github.com/MauricioJC3/arnes_ng/internal/lsp"
 	"github.com/MauricioJC3/arnes_ng/internal/memory"
@@ -24,7 +23,7 @@ type BaseToolDeps struct {
 // own registry is this pool plus the delegate tool, installed via SetTools.
 func BuildBaseTools(d BaseToolDeps) *tool.Registry {
 	return tool.NewRegistry(
-		tool.Bash{Timeout: 30 * time.Second},
+		tool.Bash{Timeout: tool.DefaultBashTimeout},
 		tool.Grep{},
 		tool.Glob{},
 		tool.ReadFile{},
