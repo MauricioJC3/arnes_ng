@@ -656,6 +656,61 @@ func TestOpenAICompatLengthFinishWithCompleteToolCallIsKept(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatMaxTokensParamName(t *testing.T) {
+	cases := []struct {
+		name     string
+		baseURL  string
+		wantKey  string
+		wantGone string
+	}{
+		{"openai requires max_completion_tokens", OpenAIBaseURL, "max_completion_tokens", "max_tokens"},
+		{"deepseek keeps max_tokens", DeepSeekBaseURL, "max_tokens", "max_completion_tokens"},
+		{"kimi keeps max_tokens", KimiBaseURL, "max_tokens", "max_completion_tokens"},
+		{"nvidia keeps max_tokens", NVIDIABaseURL, "max_tokens", "max_completion_tokens"},
+		{"opencode keeps max_tokens", OpenCodeBaseURL, "max_tokens", "max_completion_tokens"},
+		{"local runner keeps max_tokens", "http://localhost:1234/v1", "max_tokens", "max_completion_tokens"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			oc := NewOpenAICompat(OpenAICompatConfig{BaseURL: tt.baseURL, APIKey: "k", Model: "m"})
+			var p ocChatRequest
+			oc.setMaxTokens(&p, 4096)
+			raw, err := json.Marshal(p)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			body := string(raw)
+			if !strings.Contains(body, `"`+tt.wantKey+`":4096`) {
+				t.Errorf("body %s no manda %q=4096", body, tt.wantKey)
+			}
+			if strings.Contains(body, `"`+tt.wantGone+`"`) {
+				t.Errorf("body %s no debería contener %q", body, tt.wantGone)
+			}
+		})
+	}
+}
+
+func TestOpenAICompatWireOmitsCompletionTokensForNonOpenAI(t *testing.T) {
+	var rawBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rawBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	oc := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, APIKey: "k", Model: "deepseek-chat"})
+	if _, err := oc.SendMessage(context.Background(), Request{Messages: []Message{{Role: RoleUser, Text: "hola"}}}); err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if !strings.Contains(string(rawBody), `"max_tokens"`) {
+		t.Errorf("body %s debería mandar max_tokens a un provider no-OpenAI", rawBody)
+	}
+	if strings.Contains(string(rawBody), `"max_completion_tokens"`) {
+		t.Errorf("body %s no debería mandar max_completion_tokens a un provider no-OpenAI", rawBody)
+	}
+}
+
 func TestIsOpenAIChatModel(t *testing.T) {
 	keep := []string{"gpt-4o", "gpt-4.1-mini", "chatgpt-4o-latest", "o1", "o1-mini", "o3-mini", "o4-mini"}
 	drop := []string{"text-embedding-3-small", "whisper-1", "dall-e-3", "tts-1", "omni-moderation-latest"}
