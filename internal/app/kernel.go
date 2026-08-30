@@ -25,6 +25,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/MauricioJC3/arnes_ng/internal/agent"
 	"github.com/MauricioJC3/arnes_ng/internal/approval"
@@ -68,6 +69,7 @@ type Deps struct {
 	Version       string      // running binary version, for /update-arnes
 	Repo          string      // GitHub owner/name the self-updater pulls from
 	Todos         *todo.Store // task checklist; persisted per session and restored on resume
+	CheckCommand  string      // project verification for the completion gate; empty disables it
 }
 
 // App holds the machinery to (re)build a conversation and owns the live one. It
@@ -101,6 +103,8 @@ type App struct {
 	repo          string
 
 	todos           *todo.Store
+	checkCommand    string
+	firstTask       string // the session's original user request, kept for the completion-gate anchor
 	sess            *session.Session
 	ag              *agent.Agent
 	conv            *session.Persisting
@@ -135,6 +139,7 @@ func New(d Deps) *App {
 		version:       d.Version,
 		repo:          d.Repo,
 		todos:         d.Todos,
+		checkCommand:  d.CheckCommand,
 	}
 }
 
@@ -210,6 +215,15 @@ func (a *App) agentOptions() []agent.Option {
 			opts = append(opts, agent.WithDeltaFn(a.emitDelta))
 		}
 	}
+	// Completion gate: verify before a turn ends, keep the task + plan anchored
+	// in the prompt, and nudge on an abandoned checklist.
+	if v := a.verifier(); v != nil {
+		opts = append(opts, agent.WithVerifier(v))
+	}
+	opts = append(opts,
+		agent.WithAnchorFn(a.anchorText),
+		agent.WithOpenTodosFn(a.openTodos),
+	)
 	return opts
 }
 
@@ -274,6 +288,16 @@ func (a *App) FreshConversation() command.Conversation {
 // sync with the agent.
 func (a *App) Run(ctx context.Context, in string) (string, error) {
 	a.turnCtx = ctx // so emitDelta can bail on Ctrl+C instead of parking on a full channel
+	if a.firstTask == "" {
+		// The session's original task anchors the prompt for the rest of the run.
+		// On resume it is recovered from the restored history; on a fresh session
+		// this input is it.
+		if h := firstUserText(a.ag.History()); h != "" {
+			a.firstTask = h
+		} else {
+			a.firstTask = strings.TrimSpace(in)
+		}
+	}
 	if a.checkpoints != nil {
 		a.checkpoints.Begin(a.ag.History(), in)
 	}

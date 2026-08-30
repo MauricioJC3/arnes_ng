@@ -233,6 +233,7 @@ func run() error {
 		Version:       version,
 		Repo:          repo,
 		Todos:         todoStore,
+		CheckCommand:  cmp.Or(os.Getenv("ARNES_CHECK_CMD"), cfg.CheckCommand),
 	}
 	if !hookCfg.Empty() {
 		deps.Hooks = hook.New(hookCfg, 30*time.Second)

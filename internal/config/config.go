@@ -28,6 +28,11 @@ type Config struct {
 	// mode (write_file / edit_file only). Empty falls back to the built-in
 	// defaults (.env, .env.*).
 	ProtectedPaths []string `json:"protected_paths,omitempty"`
+	// CheckCommand is the project verification run by the completion gate before
+	// a turn that edited anything is allowed to end (e.g. "go build ./... && go
+	// test ./..."). A failure is fed back to the model. Empty disables the gate;
+	// ARNES_CHECK_CMD overrides it.
+	CheckCommand string `json:"check_command,omitempty"`
 }
 
 // DefaultPath is ~/.arnes/config.json.
