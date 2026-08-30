@@ -3,6 +3,7 @@
 package session
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -42,17 +43,44 @@ func New(providerName, model, cwd string) *Session {
 
 // Meta is the lightweight view used to list sessions without loading every message.
 type Meta struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Model     string    `json:"model"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Messages  int       `json:"messages"`
-	UsageIn   int       `json:"usage_in"`
-	UsageOut  int       `json:"usage_out"`
+	ID        string       `json:"id"`
+	Title     string       `json:"title"`
+	Model     string       `json:"model"`
+	UpdatedAt time.Time    `json:"updated_at"`
+	Messages  int          `json:"messages"`
+	UsageIn   int          `json:"usage_in"`
+	UsageOut  int          `json:"usage_out"`
+	Todo      TodoProgress `json:"todo,omitempty"`
+}
+
+// TodoProgress summarizes a session's task checklist for the session list and
+// picker, so you can tell which one you left half-finished.
+type TodoProgress struct {
+	Done  int `json:"done,omitempty"`
+	Total int `json:"total,omitempty"`
+}
+
+// Label renders the progress for a listing line: "" when there are no tasks,
+// "✓ tareas" when every task is done, else "N/M tareas".
+func (p TodoProgress) Label() string {
+	switch {
+	case p.Total == 0:
+		return ""
+	case p.Done >= p.Total:
+		return "✓ tareas"
+	default:
+		return fmt.Sprintf("%d/%d tareas", p.Done, p.Total)
+	}
 }
 
 // Meta projects the session into its listing view.
 func (s *Session) Meta() Meta {
+	done := 0
+	for _, it := range s.Todos {
+		if it.Status == todo.Done {
+			done++
+		}
+	}
 	return Meta{
 		ID:        s.ID,
 		Title:     s.Title,
@@ -61,6 +89,7 @@ func (s *Session) Meta() Meta {
 		Messages:  len(s.Messages),
 		UsageIn:   s.UsageIn,
 		UsageOut:  s.UsageOut,
+		Todo:      TodoProgress{Done: done, Total: len(s.Todos)},
 	}
 }
 

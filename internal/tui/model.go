@@ -88,6 +88,7 @@ const (
 	stateApproval                   // a tool call is waiting for y/n
 	stateConnectForm                // the /connect picker is open
 	stateModelForm                  // the /model picker is open
+	stateSessionForm                // the /sessions resume picker is open
 )
 
 // state reports the current UI mode. Order matters: the pickers sit on top of
@@ -98,6 +99,8 @@ func (m Model) state() uiState {
 		return stateConnectForm
 	case m.model != nil:
 		return stateModelForm
+	case m.session != nil:
+		return stateSessionForm
 	case m.approvalPrompt.active():
 		return stateApproval
 	case m.busy:
@@ -128,6 +131,7 @@ type Model struct {
 
 	connect        *connectForm
 	model          *modelForm
+	session        *sessionForm
 	listModels     ListModelsFunc
 	quitting       bool
 	quitHint       bool // first Esc arms the "Esc again to quit" prompt
@@ -246,6 +250,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.driveConnectForm(msg)
 		case stateModelForm:
 			return m.driveModelForm(msg)
+		case stateSessionForm:
+			return m.driveSessionForm(msg)
 		}
 
 		if m.menu.open {
@@ -554,6 +560,31 @@ func (m Model) driveModelForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// driveSessionForm feeds one key to the /sessions resume picker and, on a pick,
+// resumes that session. It mirrors the plain `/resume <id>` path.
+func (m Model) driveSessionForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	done, cancelled := m.session.update(msg)
+	switch {
+	case cancelled:
+		m.session = nil
+		m.add(kindInfo, "/sessions cancelado")
+	case done != nil:
+		m.session = nil
+		sc, ok := m.conv.(command.Sessions)
+		if !ok {
+			m.add(kindError, "este arnés no soporta reanudar sesiones")
+			return m, nil
+		}
+		out, err := sc.ResumeSession(done.id)
+		if err != nil {
+			m.add(kindError, err.Error())
+		} else {
+			m.add(kindInfo, out)
+		}
+	}
+	return m, nil
+}
+
 // submit handles Enter: a slash command runs synchronously; plain text starts an
 // agent turn in a goroutine.
 func (m Model) submit() (tea.Model, tea.Cmd) {
@@ -568,6 +599,18 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	if text == "/connect" {
 		m.connect = newConnectForm()
 		return m, nil
+	}
+
+	// A bare /sessions (or /ls) opens the interactive resume picker when the
+	// harness manages sessions and there is at least one saved; otherwise it
+	// falls through to Dispatch, which prints the plain list.
+	if text == "/sessions" || text == "/ls" {
+		if sc, ok := m.conv.(command.Sessions); ok {
+			if metas, err := sc.ListSessions(); err == nil && len(metas) > 0 {
+				m.session = newSessionForm(metas, m.sessionID())
+				return m, nil
+			}
+		}
 	}
 
 	// A bare /model opens the picker when the harness can enumerate models;
@@ -642,6 +685,9 @@ func (m Model) cancelWithCtrlC() (tea.Model, tea.Cmd) {
 	case m.model != nil:
 		m.model = nil
 		m.add(kindInfo, "/model cancelado")
+	case m.session != nil:
+		m.session = nil
+		m.add(kindInfo, "/sessions cancelado")
 	case m.approvalPrompt.active():
 		return m.answerApproval(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}), nil
 	case m.menu.open:
