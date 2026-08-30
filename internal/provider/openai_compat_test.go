@@ -711,6 +711,75 @@ func TestOpenAICompatWireOmitsCompletionTokensForNonOpenAI(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatReasoningEffortParamName(t *testing.T) {
+	cases := []struct {
+		name    string
+		baseURL string
+		model   string
+		want    bool // expect "reasoning_effort":"none" in the body
+	}{
+		{"openai gpt-5.6-terra disables reasoning", OpenAIBaseURL, "gpt-5.6-terra", true},
+		{"openai o1 disables reasoning", OpenAIBaseURL, "o1", true},
+		{"openai o3-mini disables reasoning", OpenAIBaseURL, "o3-mini", true},
+		{"openai o4-mini disables reasoning", OpenAIBaseURL, "o4-mini", true},
+		{"openai gpt-4o untouched", OpenAIBaseURL, "gpt-4o", false},
+		{"openai gpt-4.1 untouched", OpenAIBaseURL, "gpt-4.1", false},
+		{"deepseek reasoner untouched", DeepSeekBaseURL, "deepseek-reasoner", false},
+		{"kimi untouched", KimiBaseURL, "kimi-k2", false},
+		{"nvidia untouched", NVIDIABaseURL, "some/reasoner", false},
+		{"opencode untouched", OpenCodeBaseURL, "grok-4-free", false},
+		{"local runner untouched", "http://localhost:1234/v1", "gpt-5-local", false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			oc := NewOpenAICompat(OpenAICompatConfig{BaseURL: tt.baseURL, APIKey: "k", Model: tt.model})
+			var p ocChatRequest
+			oc.setReasoningEffort(&p)
+			raw, err := json.Marshal(p)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			has := strings.Contains(string(raw), `"reasoning_effort":"none"`)
+			if has != tt.want {
+				t.Errorf("body %s: reasoning_effort=none presente=%v, quiero %v", raw, has, tt.want)
+			}
+		})
+	}
+}
+
+func TestOpenAICompatWireOmitsReasoningEffortForNonOpenAI(t *testing.T) {
+	var rawBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rawBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	oc := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, APIKey: "k", Model: "deepseek-reasoner"})
+	if _, err := oc.SendMessage(context.Background(), Request{Messages: []Message{{Role: RoleUser, Text: "hola"}}}); err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if strings.Contains(string(rawBody), `"reasoning_effort"`) {
+		t.Errorf("body %s no debería mandar reasoning_effort a un provider no-OpenAI", rawBody)
+	}
+}
+
+func TestIsOpenAIReasoningModel(t *testing.T) {
+	reasoning := []string{"o1", "o1-mini", "o3", "o3-mini", "o4-mini", "gpt-5", "gpt-5.6-terra", "gpt-5-mini"}
+	plain := []string{"gpt-4o", "gpt-4.1", "gpt-4.1-mini", "chatgpt-4o-latest", "gpt-4-turbo"}
+	for _, id := range reasoning {
+		if !isOpenAIReasoningModel(id) {
+			t.Errorf("%q debería ser modelo de razonamiento", id)
+		}
+	}
+	for _, id := range plain {
+		if isOpenAIReasoningModel(id) {
+			t.Errorf("%q no es modelo de razonamiento", id)
+		}
+	}
+}
+
 func TestIsOpenAIChatModel(t *testing.T) {
 	keep := []string{"gpt-4o", "gpt-4.1-mini", "chatgpt-4o-latest", "o1", "o1-mini", "o3-mini", "o4-mini"}
 	drop := []string{"text-embedding-3-small", "whisper-1", "dall-e-3", "tts-1", "omni-moderation-latest"}
