@@ -12,6 +12,8 @@ redistribution and modification with attribution.
 | `software-architecture` | [davila7/claude-code-templates](https://github.com/davila7/claude-code-templates) (`development/software-architecture`) | MIT |
 | `architecture-review` | [keez97/claude-architecture-skills](https://github.com/keez97/claude-architecture-skills) (`architecture-workflow`, `*-architecture-review`) | MIT |
 | `tdd-workflow` | [davila7/claude-code-templates](https://github.com/davila7/claude-code-templates) (`development/tdd-workflow`); cycle framing from the Obra "Superpowers" workflow | MIT |
+| `api-design` | [affaan-m/everything-claude-code](https://github.com/affaan-m/everything-claude-code) (`skills/api-design`, `skills/backend-patterns`), [davila7/claude-code-templates](https://github.com/davila7/claude-code-templates) (`api-integration-specialist`) | MIT |
+| `testing-strategy` | [davila7/claude-code-templates](https://github.com/davila7/claude-code-templates) (`senior-qa`, testing toolkit); pyramid and test-double framing from Fowler / Meszaros (xUnit Patterns) | MIT |
 | `distinctive-web-design` | Original, written for arnes | — |
 
 The bundled files are rewrites, not verbatim copies: content was trimmed,
