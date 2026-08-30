@@ -83,7 +83,9 @@ func grepRipgrep(ctx context.Context, pattern, root, glob string, ic bool) (stri
 	}
 	args = append(args, "--", pattern, root)
 
-	out, err := exec.CommandContext(ctx, "rg", args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, "rg", args...)
+	hardenCmd(cmd)
+	out, err := cmd.CombinedOutput()
 	text := strings.TrimRight(string(out), "\n")
 	if err != nil {
 		var ee *exec.ExitError
