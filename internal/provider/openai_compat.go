@@ -133,6 +133,18 @@ func (o *OpenAICompat) setMaxTokens(p *ocChatRequest, n int) {
 	p.MaxTokens = n
 }
 
+// setReasoningEffort switches server-side reasoning off for OpenAI's reasoning
+// models. On /chat/completions those models otherwise apply a default
+// reasoning effort that OpenAI rejects with HTTP 400 whenever function tools
+// are present -- and arnes always sends tools. The field is gated on OpenAI's
+// own host AND a reasoning-model id, so plain OpenAI models (gpt-4o, gpt-4.1)
+// and every other OpenAI-compatible provider never see it.
+func (o *OpenAICompat) setReasoningEffort(p *ocChatRequest) {
+	if strings.Contains(o.baseURL, "api.openai.com") && isOpenAIReasoningModel(o.model) {
+		p.ReasoningEffort = "none"
+	}
+}
+
 func (o *OpenAICompat) SetModel(model string) {
 	if model != "" {
 		o.model = model
@@ -191,6 +203,19 @@ func (o *OpenAICompat) ListModels(ctx context.Context) ([]string, error) {
 // and drops everything else OpenAI's /models returns.
 func isOpenAIChatModel(id string) bool {
 	for _, p := range []string{"gpt-", "chatgpt-", "o1", "o3", "o4-"} {
+		if strings.HasPrefix(id, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isOpenAIReasoningModel reports whether id belongs to one of OpenAI's
+// reasoning families (the o-series and gpt-5+). Those apply a non-none
+// reasoning effort by default, which /chat/completions refuses alongside
+// function tools.
+func isOpenAIReasoningModel(id string) bool {
+	for _, p := range []string{"o1", "o3", "o4-", "gpt-5"} {
 		if strings.HasPrefix(id, p) {
 			return true
 		}
@@ -289,6 +314,7 @@ func (o *OpenAICompat) SendMessage(ctx context.Context, req Request) (Response, 
 		Messages: toOCMessages(req),
 	}
 	o.setMaxTokens(&payload, maxTokens)
+	o.setReasoningEffort(&payload)
 	if len(req.Tools) > 0 {
 		payload.Tools = toOCTools(req.Tools)
 	}
@@ -358,6 +384,7 @@ func (o *OpenAICompat) StreamMessage(ctx context.Context, req Request, onDelta f
 		StreamOptions: &ocStreamOpts{IncludeUsage: true},
 	}
 	o.setMaxTokens(&payload, maxTokens)
+	o.setReasoningEffort(&payload)
 	if len(req.Tools) > 0 {
 		payload.Tools = toOCTools(req.Tools)
 	}
@@ -556,10 +583,13 @@ type ocChatRequest struct {
 	// (*OpenAICompat).setMaxTokens. OpenAI's own API rejects the legacy
 	// `max_tokens` on its newer models and demands `max_completion_tokens`;
 	// every other OpenAI-compatible backend still speaks `max_tokens`.
-	MaxTokens           int           `json:"max_tokens,omitempty"`
-	MaxCompletionTokens int           `json:"max_completion_tokens,omitempty"`
-	Stream              bool          `json:"stream,omitempty"`
-	StreamOptions       *ocStreamOpts `json:"stream_options,omitempty"`
+	MaxTokens           int `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int `json:"max_completion_tokens,omitempty"`
+	// ReasoningEffort is only ever set to "none", and only for OpenAI's own
+	// reasoning models -- see (*OpenAICompat).setReasoningEffort.
+	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
+	Stream          bool          `json:"stream,omitempty"`
+	StreamOptions   *ocStreamOpts `json:"stream_options,omitempty"`
 }
 
 type ocStreamOpts struct {
