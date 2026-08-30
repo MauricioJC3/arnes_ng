@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/MauricioJC3/arnes_ng/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/todo"
 )
 
 // Session is one persisted conversation.
@@ -21,6 +22,9 @@ type Session struct {
 	UsageIn   int                `json:"usage_in,omitempty"`
 	UsageOut  int                `json:"usage_out,omitempty"`
 	Messages  []provider.Message `json:"messages"`
+	// Todos is the task checklist as of the last saved turn, so quitting
+	// mid-task and resuming brings the panel back with its ticks intact.
+	Todos []todo.Item `json:"todos,omitempty"`
 }
 
 // New starts an empty session with a fresh id and timestamps.

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/MauricioJC3/arnes_ng/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/todo"
 )
 
 func TestFileStoreRoundTrip(t *testing.T) {
@@ -175,6 +176,33 @@ func TestPersistingWithModelFnTracksRuntimeModel(t *testing.T) {
 	got, _ := store.Load(sess.ID)
 	if got.Model != "claude-opus-5" {
 		t.Fatalf("Model persistido = %q, WithModelFn debería seguir el cambio en runtime", got.Model)
+	}
+}
+
+func TestPersistingWithTodosFnSavesChecklist(t *testing.T) {
+	store, _ := NewFileStore(t.TempDir())
+	sess := New("mock", "m", "")
+	items := []todo.Item{{Content: "una", Status: todo.InProgress}}
+	p := NewPersisting(&fakeAgent{replies: []string{"r1", "r2"}}, store, sess,
+		WithTodosFn(func() []todo.Item { return items }))
+
+	if _, err := p.Run(context.Background(), "arrancá"); err != nil {
+		t.Fatal(err)
+	}
+	items = []todo.Item{
+		{Content: "una", Status: todo.Done},
+		{Content: "dos", Status: todo.Pending},
+	}
+	if _, err := p.Run(context.Background(), "seguí"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.Load(sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Todos) != 2 || got.Todos[0].Status != todo.Done || got.Todos[1].Content != "dos" {
+		t.Fatalf("la sesión no persistió el último estado del checklist: %+v", got.Todos)
 	}
 }
 

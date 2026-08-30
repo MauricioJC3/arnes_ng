@@ -232,6 +232,7 @@ func run() error {
 		Subagents:     subReg,
 		Version:       version,
 		Repo:          repo,
+		Todos:         todoStore,
 	}
 	if !hookCfg.Empty() {
 		deps.Hooks = hook.New(hookCfg, 30*time.Second)
