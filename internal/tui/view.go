@@ -72,7 +72,9 @@ func (m Model) View() string {
 	case stateApproval:
 		foot = m.approvalBox()
 	case stateBusy:
-		foot = m.inputBox(m.styles.Muted.Render(m.sp.View() + " pensando…   " + m.styles.Muted.Render("Ctrl+C para cancelar")))
+		// The prompt stays visible so the user can type ahead; Enter queues it.
+		// The "working / N queued" indicator lives in the status bar.
+		foot = m.inputBox(m.ta.View())
 	default:
 		box := m.inputBox(m.ta.View())
 		if m.menu.open {
@@ -233,7 +235,11 @@ func (m Model) statusBar() string {
 		seg = append(seg, "🖱 scroll (Ctrl+O: copiar)")
 	}
 	if m.busy {
-		seg = append(seg, m.sp.View()+" trabajando")
+		work := m.sp.View() + " trabajando"
+		if n := len(m.queued); n > 0 {
+			work += fmt.Sprintf(" · %d en cola", n)
+		}
+		seg = append(seg, work)
 	} else if !m.vp.AtBottom() {
 		seg = append(seg, "▼ ↑↓/PgUp para ver más")
 	}

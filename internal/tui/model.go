@@ -6,7 +6,9 @@ package tui
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -32,6 +34,7 @@ type Config struct {
 	Cost          func() string // running session cost, e.g. "$0.0421"; nil/"" hides it
 	Approvals     chan approval.Request
 	Deltas        chan string      // streamed text chunks; nil when streaming is off
+	Activity      chan string      // live "what the agent is doing" lines (tool calls); nil to disable
 	Notices       chan string      // out-of-band lines (e.g. "update available"); nil to disable
 	Todos         chan []todo.Item // live task checklist; nil to disable the panel
 	MouseOn       bool             // whether the mouse was captured at startup (Ctrl+O toggles)
@@ -58,6 +61,14 @@ type approvalMsg approval.Request
 
 // deltaMsg is one streamed text chunk.
 type deltaMsg string
+
+// flushLiveMsg is the timer tick that renders streamed text coalesced since the
+// last flush (see deltaFlushInterval), so a burst that goes quiet before the
+// next chunk still shows up promptly.
+type flushLiveMsg struct{}
+
+// activityMsg is one "the agent just ran tool X" status line for the transcript.
+type activityMsg string
 
 // noticeMsg is an out-of-band line to drop into the transcript (e.g. an
 // update-available note from the daily check).
@@ -115,17 +126,21 @@ type Model struct {
 
 	width, height int
 
-	connect    *connectForm
-	model      *modelForm
-	listModels ListModelsFunc
-	quitting   bool
-	quitHint   bool // first Esc arms the "Esc again to quit" prompt
-	mouseOn    bool // mouse capture state; Ctrl+O toggles it (off = terminal text selection)
+	connect        *connectForm
+	model          *modelForm
+	listModels     ListModelsFunc
+	quitting       bool
+	quitHint       bool // first Esc arms the "Esc again to quit" prompt
+	mouseOn        bool // mouse capture state; Ctrl+O toggles it (off = terminal text selection)
+	flushScheduled bool // a flushLiveMsg tick is already in flight; don't stack more
 
 	approvals chan approval.Request
+	activity  chan string
 	notices   chan string
 	todos     chan []todo.Item
 	todoItems []todo.Item // current checklist; rendered as a panel above the input
+
+	queued []string // messages typed while a turn was running; sent one per turn as it frees up
 }
 
 // New builds the model. It does not start the program (see Run).
@@ -153,6 +168,7 @@ func New(cfg Config) Model {
 		turn:        newTurn(cfg.Deltas),
 		sp:          sp,
 		approvals:   cfg.Approvals,
+		activity:    cfg.Activity,
 		notices:     cfg.Notices,
 		todos:       cfg.Todos,
 		mouseOn:     cfg.MouseOn,
@@ -169,6 +185,9 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{textarea.Blink, waitForApproval(m.approvals)}
 	if m.deltas != nil {
 		cmds = append(cmds, waitForDelta(m.deltas))
+	}
+	if m.activity != nil {
+		cmds = append(cmds, waitForActivity(m.activity))
 	}
 	if m.notices != nil {
 		cmds = append(cmds, waitForNotice(m.notices))
@@ -313,6 +332,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.approvalPrompt.active() {
 			return m.answerApproval(msg), nil
 		}
+		if msg.Type == tea.KeyEnter && m.busy {
+			return m.enqueueInput()
+		}
 		if msg.Type == tea.KeyEnter && !m.busy {
 			if s, ok := m.menu.selected(); ok && m.ta.Value() != s.Name {
 				m.ta.SetValue(s.Name)
@@ -339,10 +361,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Only the current turn's deltas matter. Anything that arrives after the
 		// turn already finished (the delta/result channels race) is drained and
 		// dropped, so it can't leak into the next message.
-		if m.busy {
-			m.transcript.appendDelta(string(msg))
+		if !m.busy {
+			return m, m.turn.awaitDelta()
 		}
-		return m, m.turn.awaitDelta()
+		m.transcript.appendDelta(string(msg))
+		cmds := []tea.Cmd{m.turn.awaitDelta()}
+		if m.transcript.liveDirty && !m.flushScheduled {
+			// This chunk was coalesced; make sure it still renders soon even if
+			// the stream goes quiet before the next one.
+			m.flushScheduled = true
+			cmds = append(cmds, tea.Tick(deltaFlushInterval, func(time.Time) tea.Msg { return flushLiveMsg{} }))
+		}
+		return m, tea.Batch(cmds...)
+
+	case flushLiveMsg:
+		m.flushScheduled = false
+		if m.busy {
+			m.transcript.flushLive()
+		}
+		return m, nil
+
+	case activityMsg:
+		// Commit whatever the model streamed before this tool call so the
+		// status line lands in chronological order (same move as approvalMsg).
+		if m.busy {
+			m.commitLive()
+			m.add(kindActivity, string(msg))
+		}
+		return m, waitForActivity(m.activity)
 
 	case noticeMsg:
 		m.add(kindInfo, string(msg))
@@ -379,6 +425,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case runResult:
 		m.turn.end()
+		m.flushScheduled = false
 		switch {
 		case msg.goal != nil:
 			m.commitLive() // the last iteration's text
@@ -410,10 +457,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.setContent(true)
 		m.ta.Focus()
+		// A message typed while this turn ran? Send it now as its own turn.
+		// Cancelled turns clear the queue in cancelWithCtrlC, so this only
+		// fires after a turn that finished on its own.
+		if len(m.queued) > 0 {
+			next := m.queued[0]
+			m.queued = m.queued[1:]
+			m.add(kindUser, next)
+			m.transcript.dropLive()
+			return m, tea.Batch(m.sp.Tick, m.turn.startAgent(m.conv, next))
+		}
 		return m, textarea.Blink
 	}
 
-	if m.state() == stateInput {
+	// The prompt stays live during a running turn too, so the user can type the
+	// next message (Enter queues it -- see enqueueInput). The pickers and a
+	// pending approval still own the keyboard.
+	if s := m.state(); s == stateInput || s == stateBusy {
 		var c tea.Cmd
 		m.ta, c = m.ta.Update(msg)
 		cmds = append(cmds, c)
@@ -538,15 +598,37 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 
 	m.add(kindUser, text)
 	m.transcript.dropLive()
-	m.ta.Blur()
+	// The prompt stays focused during the turn so the user can type ahead;
+	// Enter on that text queues it (enqueueInput).
 	return m, tea.Batch(m.sp.Tick, m.turn.startAgent(m.conv, text))
+}
+
+// enqueueInput handles Enter while a turn is running: it parks the typed text on
+// the queue instead of blocking, and it is sent as its own turn once the
+// current one finishes (see the runResult handler). Slash commands are refused
+// here -- running one mid-turn would mutate the live agent from under it.
+func (m Model) enqueueInput() (tea.Model, tea.Cmd) {
+	text := strings.TrimSpace(m.ta.Value())
+	if text == "" {
+		return m, nil
+	}
+	if strings.HasPrefix(text, "/") {
+		m.add(kindInfo, "los comandos no se encolan: esperá a que termine el turno")
+		return m, nil
+	}
+	m.queued = append(m.queued, text)
+	m.remember(text)
+	m.ta.Reset()
+	m.menu = commandMenu{}
+	m.promptInput.detachHistory()
+	m.add(kindInfo, "⏳ en cola ("+strconv.Itoa(len(m.queued))+"): "+text)
+	return m, nil
 }
 
 // startGoal kicks off a Ralph-style goal loop as a cancellable background turn.
 func (m Model) startGoal(req *command.GoalRequest) (tea.Model, tea.Cmd) {
 	m.add(kindInfo, "objetivo: "+req.Text+"  ·  Ctrl+C para cortar")
 	m.transcript.dropLive()
-	m.ta.Blur()
 	return m, tea.Batch(m.sp.Tick, m.turn.startGoal(m.conv, req))
 }
 
@@ -566,6 +648,10 @@ func (m Model) cancelWithCtrlC() (tea.Model, tea.Cmd) {
 		m.menu = commandMenu{}
 	case m.busy:
 		m.turn.interrupt()
+		if len(m.queued) > 0 {
+			m.queued = nil
+			m.add(kindInfo, "cola de mensajes descartada")
+		}
 	case m.ta.Value() != "":
 		m.ta.SetValue("")
 		m.menu.update("")
@@ -605,6 +691,10 @@ func (m Model) cycleMode() Model {
 
 func waitForApproval(ch chan approval.Request) tea.Cmd {
 	return func() tea.Msg { return approvalMsg(<-ch) }
+}
+
+func waitForActivity(ch chan string) tea.Cmd {
+	return func() tea.Msg { return activityMsg(<-ch) }
 }
 
 func waitForNotice(ch chan string) tea.Cmd {

@@ -1,8 +1,10 @@
 package app
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MauricioJC3/arnes_ng/internal/approval"
 	"github.com/MauricioJC3/arnes_ng/internal/checkpoint"
@@ -31,6 +33,7 @@ func TestNewMapsEveryDep(t *testing.T) {
 	cps := checkpoint.NewStore()
 	subs := subagent.NewRegistry()
 	deltas := make(chan string, 1)
+	activity := make(chan string, 1)
 	comp := compact.SlidingWindow{}
 	hooks := hook.New(hook.Config{}, 0)
 
@@ -46,6 +49,7 @@ func TestNewMapsEveryDep(t *testing.T) {
 		CompactAt:     42,
 		Streaming:     true,
 		Deltas:        deltas,
+		Activity:      activity,
 		Hooks:         hooks,
 		Checkpoints:   cps,
 		Mem:           mem,
@@ -70,6 +74,7 @@ func TestNewMapsEveryDep(t *testing.T) {
 		{"compactAt", a.compactAt == 42},
 		{"streaming", a.streaming},
 		{"deltas", a.deltas != nil},
+		{"activity", a.activity != nil},
 		{"hooks", a.hooks != nil},
 		{"checkpoints", a.checkpoints == cps},
 		{"mem", a.mem != nil},
@@ -133,6 +138,71 @@ func TestAgentOptionsGating(t *testing.T) {
 	noDelta := &App{streaming: true} // streaming on but no delta channel
 	if n := len(noDelta.agentOptions()); n != 3 {
 		t.Fatalf("streaming sin canal de deltas esperaba 3 opciones, hubo %d", n)
+	}
+}
+
+// TestEmitDeltaDeliversWhenConsumerKeepsUp: with room on the channel a streamed
+// chunk is forwarded straight through.
+func TestEmitDeltaDeliversWhenConsumerKeepsUp(t *testing.T) {
+	a := &App{deltas: make(chan string, 1), turnCtx: context.Background()}
+
+	a.emitDelta("hola")
+
+	select {
+	case got := <-a.deltas:
+		if got != "hola" {
+			t.Fatalf("delta = %q, esperaba %q", got, "hola")
+		}
+	default:
+		t.Fatal("emitDelta no encoló el chunk")
+	}
+}
+
+// TestEmitDeltaUnblocksOnContextCancel is the regression for the frozen-turn
+// bug: when the TUI stops draining deltas, emitDelta must not park the agent
+// goroutine forever. Cancelling the turn context has to free it so Ctrl+C can
+// actually end a stalled stream.
+func TestEmitDeltaUnblocksOnContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	a := &App{deltas: make(chan string), turnCtx: ctx} // unbuffered, nobody reading
+
+	done := make(chan struct{})
+	go func() {
+		a.emitDelta("se pierde")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("emitDelta devolvió sin consumidor ni cancelación -- debería estar bloqueado")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("emitDelta siguió bloqueado tras cancelar el contexto (turno congelado)")
+	}
+}
+
+// TestEmitDeltaWithoutTurnContextNeverBlocks covers the defensive path: a caller
+// that bypassed App.Run leaves turnCtx nil, so a full buffer drops the chunk
+// rather than wedging the turn.
+func TestEmitDeltaWithoutTurnContextNeverBlocks(t *testing.T) {
+	a := &App{deltas: make(chan string)} // unbuffered, nobody reading, no turnCtx
+
+	done := make(chan struct{})
+	go func() {
+		a.emitDelta("se pierde")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("emitDelta bloqueó sin turnCtx en vez de descartar el chunk")
 	}
 }
 

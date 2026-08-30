@@ -296,6 +296,186 @@ func TestModelStreamingRendersDeltasLive(t *testing.T) {
 	}
 }
 
+// startedTurn puts the model into a running-turn state with a fresh fakeConv.
+func startedTurn(t *testing.T, reply string) (Model, *fakeConv) {
+	t.Helper()
+	conv := &fakeConv{reply: reply}
+	m, _ := newModel(t, conv)
+	m.ta.SetValue("primer pedido")
+	tm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = tm.(Model)
+	if !m.busy {
+		t.Fatal("precondición: el turno debería estar corriendo")
+	}
+	return m, conv
+}
+
+func TestModelEnterWhileBusyQueuesInsteadOfBlocking(t *testing.T) {
+	m, _ := startedTurn(t, "ok")
+
+	m.ta.SetValue("mientras trabajás, hacé esto después")
+	tm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = tm.(Model)
+
+	if len(m.queued) != 1 || m.queued[0] != "mientras trabajás, hacé esto después" {
+		t.Fatalf("no se encoló el mensaje: %#v", m.queued)
+	}
+	if m.ta.Value() != "" {
+		t.Fatalf("el prompt debería quedar limpio tras encolar, quedó %q", m.ta.Value())
+	}
+	if !strings.Contains(plain(m), "en cola") {
+		t.Fatalf("falta el aviso de encolado:\n%s", plain(m))
+	}
+	if cmd != nil {
+		t.Fatal("encolar no dispara ningún comando")
+	}
+}
+
+func TestModelSlashCommandWhileBusyIsRefusedNotQueued(t *testing.T) {
+	m, _ := startedTurn(t, "ok")
+
+	m.ta.SetValue("/compact")
+	tm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = tm.(Model)
+
+	if len(m.queued) != 0 {
+		t.Fatalf("un comando no debería encolarse: %#v", m.queued)
+	}
+	if !strings.Contains(plain(m), "no se encolan") {
+		t.Fatalf("falta el aviso de rechazo:\n%s", plain(m))
+	}
+}
+
+func TestModelQueuedMessageRunsWhenTurnEnds(t *testing.T) {
+	m, _ := startedTurn(t, "primera respuesta")
+
+	m.ta.SetValue("segundo pedido")
+	tm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = tm.(Model)
+
+	// the running turn finishes -- consume its real result off the channel, the
+	// same happens-before edge the Bubble Tea runtime provides in production.
+	tm, _ = m.Update(<-m.results)
+	m = tm.(Model)
+
+	if len(m.queued) != 0 {
+		t.Fatalf("la cola debería haberse vaciado, quedó %#v", m.queued)
+	}
+	if !m.busy {
+		t.Fatal("el mensaje encolado debería haber arrancado un turno nuevo")
+	}
+	last := m.entries[len(m.entries)-1]
+	if last.kind != kindUser || last.text != "segundo pedido" {
+		t.Fatalf("el turno nuevo no usó el texto encolado: %+v", last)
+	}
+}
+
+func TestModelCtrlCWhileBusyDiscardsQueue(t *testing.T) {
+	m, _ := startedTurn(t, "ok")
+	m.ta.SetValue("algo encolado")
+	tm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = tm.(Model)
+	if len(m.queued) != 1 {
+		t.Fatal("precondición: debería haber 1 en cola")
+	}
+
+	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = tm.(Model)
+
+	if len(m.queued) != 0 {
+		t.Fatalf("Ctrl+C debería descartar la cola, quedó %#v", m.queued)
+	}
+	if !strings.Contains(plain(m), "cola de mensajes descartada") {
+		t.Fatalf("falta el aviso de descarte:\n%s", plain(m))
+	}
+}
+
+func TestModelTypingReachesPromptWhileBusy(t *testing.T) {
+	m, _ := startedTurn(t, "ok")
+
+	for _, r := range "hola" {
+		tm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = tm.(Model)
+	}
+	if m.ta.Value() != "hola" {
+		t.Fatalf("el texto tecleado durante el turno no llegó al prompt: %q", m.ta.Value())
+	}
+}
+
+func TestModelActivityMsgAddsDimEntryAndRearms(t *testing.T) {
+	m := New(Config{
+		Conv:      &fakeConv{reply: "ok"},
+		Provider:  provider.NewMock(),
+		SessionID: func() string { return "s" },
+		Approvals: make(chan approval.Request),
+		Activity:  make(chan string, 4),
+		Theme:     DefaultTheme(),
+	})
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = tm.(Model)
+
+	// A tool line only shows while a turn is running.
+	m.ta.SetValue("hacé algo")
+	tm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = tm.(Model)
+
+	tm, cmd := m.Update(activityMsg("escribió internal/x/y.go"))
+	m = tm.(Model)
+
+	last := m.entries[len(m.entries)-1]
+	if last.kind != kindActivity || last.text != "escribió internal/x/y.go" {
+		t.Fatalf("no se agregó la línea de actividad: %+v", last)
+	}
+	if cmd == nil {
+		t.Fatal("activityMsg debería re-armar el waiter")
+	}
+}
+
+func TestModelActivityMsgIgnoredWhenIdle(t *testing.T) {
+	m := New(Config{
+		Conv:      &fakeConv{reply: "ok"},
+		Provider:  provider.NewMock(),
+		SessionID: func() string { return "s" },
+		Approvals: make(chan approval.Request),
+		Activity:  make(chan string, 4),
+		Theme:     DefaultTheme(),
+	})
+	tm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = tm.(Model)
+
+	before := len(m.entries)
+	tm, _ = m.Update(activityMsg("escribió algo"))
+	m = tm.(Model)
+	if len(m.entries) != before {
+		t.Fatal("una línea de actividad sin turno en curso no debería agregarse")
+	}
+}
+
+func TestModelFlushLiveMsgRendersCoalescedTail(t *testing.T) {
+	prev := deltaFlushInterval
+	deltaFlushInterval = time.Hour // every chunk after the first coalesces
+	defer func() { deltaFlushInterval = prev }()
+
+	m := newStreamingModel(t, &fakeConv{reply: "hola mundo"})
+	m.ta.SetValue("dale")
+	tm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = tm.(Model)
+
+	tm, _ = m.Update(deltaMsg("hola")) // first chunk: renders now
+	m = tm.(Model)
+	tm, _ = m.Update(deltaMsg(" mundo")) // coalesced: buffered, not in the viewport yet
+	m = tm.(Model)
+	if strings.Contains(m.vp.View(), "mundo") {
+		t.Fatalf("el tail coalescido no debería estar en el viewport todavía:\n%s", m.vp.View())
+	}
+
+	tm, _ = m.Update(flushLiveMsg{}) // the timer tick
+	m = tm.(Model)
+	if !strings.Contains(m.vp.View(), "hola mundo") {
+		t.Fatalf("flushLiveMsg no volcó el texto pendiente:\n%s", m.vp.View())
+	}
+}
+
 func TestModelLateDeltaAfterResultIsIgnored(t *testing.T) {
 	m := newStreamingModel(t, &fakeConv{reply: "hola mundo"})
 	m.ta.SetValue("hola")
