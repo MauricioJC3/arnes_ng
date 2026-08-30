@@ -119,6 +119,20 @@ func NewOpenCode(apiKey, model string) *OpenAICompat {
 
 func (o *OpenAICompat) Model() string { return o.model }
 
+// setMaxTokens writes the output-token cap under the parameter name the target
+// endpoint accepts. OpenAI's API deprecated `max_tokens` for chat completions
+// and its newer models (gpt-5.x, the o-series) reject it outright, requiring
+// `max_completion_tokens`. DeepSeek, Kimi, NVIDIA, OpenCode and local runners
+// still expect `max_tokens` and may not understand the newer name, so the
+// switch is gated on the OpenAI host only.
+func (o *OpenAICompat) setMaxTokens(p *ocChatRequest, n int) {
+	if strings.Contains(o.baseURL, "api.openai.com") {
+		p.MaxCompletionTokens = n
+		return
+	}
+	p.MaxTokens = n
+}
+
 func (o *OpenAICompat) SetModel(model string) {
 	if model != "" {
 		o.model = model
@@ -271,10 +285,10 @@ func (o *OpenAICompat) SendMessage(ctx context.Context, req Request) (Response, 
 		maxTokens = 8192
 	}
 	payload := ocChatRequest{
-		Model:     o.model,
-		Messages:  toOCMessages(req),
-		MaxTokens: maxTokens,
+		Model:    o.model,
+		Messages: toOCMessages(req),
 	}
+	o.setMaxTokens(&payload, maxTokens)
 	if len(req.Tools) > 0 {
 		payload.Tools = toOCTools(req.Tools)
 	}
@@ -340,10 +354,10 @@ func (o *OpenAICompat) StreamMessage(ctx context.Context, req Request, onDelta f
 	payload := ocChatRequest{
 		Model:         o.model,
 		Messages:      toOCMessages(req),
-		MaxTokens:     maxTokens,
 		Stream:        true,
 		StreamOptions: &ocStreamOpts{IncludeUsage: true},
 	}
+	o.setMaxTokens(&payload, maxTokens)
 	if len(req.Tools) > 0 {
 		payload.Tools = toOCTools(req.Tools)
 	}
@@ -535,12 +549,17 @@ func parseOCStream(body io.Reader, onDelta func(string)) (Response, error) {
 // --- wire types -------------------------------------------------------------
 
 type ocChatRequest struct {
-	Model         string        `json:"model"`
-	Messages      []ocMessage   `json:"messages"`
-	Tools         []ocTool      `json:"tools,omitempty"`
-	MaxTokens     int           `json:"max_tokens,omitempty"`
-	Stream        bool          `json:"stream,omitempty"`
-	StreamOptions *ocStreamOpts `json:"stream_options,omitempty"`
+	Model    string      `json:"model"`
+	Messages []ocMessage `json:"messages"`
+	Tools    []ocTool    `json:"tools,omitempty"`
+	// Exactly one of the two token caps is populated per request -- see
+	// (*OpenAICompat).setMaxTokens. OpenAI's own API rejects the legacy
+	// `max_tokens` on its newer models and demands `max_completion_tokens`;
+	// every other OpenAI-compatible backend still speaks `max_tokens`.
+	MaxTokens           int           `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int           `json:"max_completion_tokens,omitempty"`
+	Stream              bool          `json:"stream,omitempty"`
+	StreamOptions       *ocStreamOpts `json:"stream_options,omitempty"`
 }
 
 type ocStreamOpts struct {
