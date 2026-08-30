@@ -78,7 +78,9 @@ type bareConv struct{}
 func (bareConv) Run(context.Context, string) (string, error) { return "", nil }
 
 func TestDispatch(t *testing.T) {
-	app := &fakeApp{metas: []session.Meta{{ID: "s1", Title: "primera", Messages: 3}}}
+	app := &fakeApp{metas: []session.Meta{
+		{ID: "s1", Title: "primera", Messages: 3, Todo: session.TodoProgress{Done: 1, Total: 4}},
+	}}
 	p := provider.NewMock()
 
 	t.Run("/help", func(t *testing.T) {
@@ -124,6 +126,9 @@ func TestDispatch(t *testing.T) {
 		r, _ := Dispatch("/sessions", app, p)
 		if !strings.Contains(r.Output, "s1") || !strings.Contains(r.Output, "primera") {
 			t.Fatalf("output: %q", r.Output)
+		}
+		if !strings.Contains(r.Output, "1/4 tareas") {
+			t.Fatalf("la lista debería mostrar el progreso de tareas: %q", r.Output)
 		}
 	})
 

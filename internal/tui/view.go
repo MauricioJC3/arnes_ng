@@ -80,6 +80,8 @@ func (m Model) View() string {
 		foot = m.formBox(m.connect.view(m.styles), m.theme.Accent)
 	case stateModelForm:
 		foot = m.formBox(m.model.view(m.styles), m.theme.Accent)
+	case stateSessionForm:
+		foot = m.formBox(m.session.view(m.styles), m.theme.Accent)
 	case stateApproval:
 		foot = m.approvalBox()
 	case stateBusy:

@@ -367,6 +367,9 @@ func listSessions(conv Conversation) (Result, error) {
 			b.WriteByte('\n')
 		}
 		fmt.Fprintf(&b, "  %s  %2d msg  %s", m.ID, m.Messages, title)
+		if lbl := m.Todo.Label(); lbl != "" {
+			fmt.Fprintf(&b, "  · %s", lbl)
+		}
 	}
 	return Result{Output: b.String()}, nil
 }

@@ -206,6 +206,38 @@ func TestPersistingWithTodosFnSavesChecklist(t *testing.T) {
 	}
 }
 
+func TestMetaCarriesTodoProgress(t *testing.T) {
+	s := New("mock", "m", "")
+	s.Todos = []todo.Item{
+		{Content: "a", Status: todo.Done},
+		{Content: "b", Status: todo.Done},
+		{Content: "c", Status: todo.InProgress},
+	}
+	m := s.Meta()
+	if m.Todo.Done != 2 || m.Todo.Total != 3 {
+		t.Fatalf("Meta.Todo = %+v, quiero 2/3", m.Todo)
+	}
+}
+
+func TestTodoProgressLabel(t *testing.T) {
+	cases := []struct {
+		name string
+		p    TodoProgress
+		want string
+	}{
+		{"sin tareas", TodoProgress{}, ""},
+		{"en progreso", TodoProgress{Done: 2, Total: 5}, "2/5 tareas"},
+		{"todas hechas", TodoProgress{Done: 4, Total: 4}, "✓ tareas"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.p.Label(); got != tt.want {
+				t.Fatalf("Label() = %q, quiero %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // failOnSave wraps a real store but forces Save to fail.
 type failOnSave struct{ *FileStore }
 
