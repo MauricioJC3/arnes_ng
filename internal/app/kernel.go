@@ -36,6 +36,7 @@ import (
 	"github.com/MauricioJC3/arnes_ng/internal/memory"
 	"github.com/MauricioJC3/arnes_ng/internal/provider"
 	"github.com/MauricioJC3/arnes_ng/internal/session"
+	"github.com/MauricioJC3/arnes_ng/internal/shell"
 	"github.com/MauricioJC3/arnes_ng/internal/subagent"
 	"github.com/MauricioJC3/arnes_ng/internal/todo"
 	"github.com/MauricioJC3/arnes_ng/internal/tool"
@@ -187,6 +188,13 @@ func (a *App) CompactorName() string { return a.ag.CompactorName() }
 // accumulated context), and the mode addendum.
 func (a *App) buildSystem() string {
 	s := systemPrompt + a.rules
+	if !shell.POSIX() {
+		s += "\n\n## Shell\n\n" +
+			"El tool `bash` corre PowerShell en esta máquina. Encadená comandos con `;`, NO con `&&`. " +
+			"Para escribir archivos usá write_file, no redirección `>` (PowerShell 5.1 escribe UTF-16 con " +
+			"BOM y corrompe el archivo). `ls`/`cat`/`rm`/`cp` funcionan como alias; para lo demás usá los " +
+			"cmdlets nativos (Get-ChildItem, Select-String, etc.)."
+	}
 	if a.mem != nil {
 		if d := memory.Digest(a.mem, 15); d != "" {
 			s += "\n\n" + d
