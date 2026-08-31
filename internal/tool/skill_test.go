@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -28,6 +29,30 @@ func TestSkillTool(t *testing.T) {
 		}
 		if !strings.Contains(out, "skill: deploy") || !strings.Contains(out, "correr CI") {
 			t.Fatalf("out = %q", out)
+		}
+	})
+
+	t.Run("skill en disco reporta su directorio base", func(t *testing.T) {
+		abs := filepath.Join(t.TempDir(), "impeccable", "SKILL.md")
+		withPath := Skill{Skills: skill.NewRegistry(
+			skill.Skill{Name: "impeccable", Body: "corré scripts/context.mjs", Path: abs},
+		)}
+		out, err := withPath.Execute(ctx, mustJSON(t, map[string]any{"name": "impeccable"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, "Directorio base del skill: "+filepath.Dir(abs)) {
+			t.Fatalf("no reportó el directorio base: %q", out)
+		}
+	})
+
+	t.Run("skill sin path en disco no reporta directorio", func(t *testing.T) {
+		out, err := tl.Execute(ctx, mustJSON(t, map[string]any{"name": "deploy"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out, "Directorio base") {
+			t.Fatalf("no debería reportar directorio sin path absoluto: %q", out)
 		}
 	})
 

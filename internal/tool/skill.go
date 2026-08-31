@@ -5,12 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/MauricioJC3/arnes_ng/internal/skill"
 )
 
 // Skill loads a named SKILL.md playbook into the current turn. The model reads
-// the returned body and follows it in place of its default approach.
+// the returned body and follows it in place of its default approach. When the
+// skill was loaded from disk, the response also states its base directory so
+// the model can resolve any bundled paths the body refers to (reference/*,
+// scripts/*).
 type Skill struct {
 	Skills *skill.Registry
 }
@@ -50,5 +55,14 @@ func (s Skill) Execute(_ context.Context, input json.RawMessage) (string, error)
 	if !ok {
 		return "", fmt.Errorf("no existe el skill %q. Disponibles:\n%s", in.Name, s.Skills.Catalog())
 	}
-	return fmt.Sprintf("# skill: %s\n\n%s", sk.Name, sk.Body), nil
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "# skill: %s\n\n", sk.Name)
+	if filepath.IsAbs(sk.Path) {
+		fmt.Fprintf(&b, "Directorio base del skill: %s\n"+
+			"Resolvé contra él cualquier ruta relativa que mencione el skill (reference/…, scripts/…).\n\n",
+			filepath.Dir(sk.Path))
+	}
+	b.WriteString(sk.Body)
+	return b.String(), nil
 }
