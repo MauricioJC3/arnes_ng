@@ -58,6 +58,10 @@ type Hooks interface {
 	// PostTool runs after the tool executed, with its output and whether it
 	// errored. A non-empty return is appended to the tool result as a note.
 	PostTool(ctx context.Context, call provider.ToolCall, result string, isErr bool) string
+	// Stop runs once the turn's final message is ready and the completion gate
+	// has passed. A non-empty return is fed back to the model as a note and the
+	// turn takes one more round; it fires at most once per turn.
+	Stop(ctx context.Context) string
 }
 
 // Option configures an Agent at construction.
@@ -350,6 +354,7 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 	callCounts := map[string]int{} // identical tool call -> times seen this turn
 	verifyFails := 0               // consecutive failing project checks at the completion gate
 	todoNudged := false            // the unfinished-checklist nudge has fired this turn
+	stopHookFired := false         // the stop hook has run this turn (it gets one shot)
 
 	for step := 0; step < a.maxSteps; step++ {
 		// Stop as soon as the caller cancels (Ctrl+C / timeout), rather than
@@ -427,6 +432,16 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 			if nudge, again := a.completionGate(ctx, &verifyFails, &todoNudged); again {
 				a.history = append(a.history, provider.Message{Role: provider.RoleUser, Text: nudge})
 				continue
+			}
+			// End-of-turn hook: a whole-project pass (lint, design review) gets
+			// one shot to surface findings the model then addresses in a final
+			// round. An empty return lets the turn end.
+			if a.hooks != nil && !stopHookFired {
+				stopHookFired = true
+				if note := a.hooks.Stop(ctx); note != "" {
+					a.history = append(a.history, provider.Message{Role: provider.RoleUser, Text: "[hook] " + note})
+					continue
+				}
 			}
 			return resp.Text, nil
 		}

@@ -41,6 +41,38 @@ func TestLoadFile(t *testing.T) {
 		}
 	})
 
+	t.Run("servidor por url se parsea", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "mcp.json")
+		body := `{"mcpServers":{"ui":{"url":"https://www.ui-skills.com/mcp"}}}`
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		c, err := LoadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ui, ok := c.MCPServers["ui"]
+		if !ok || ui.URL != "https://www.ui-skills.com/mcp" || ui.Command != "" {
+			t.Fatalf("parseo inesperado: %+v", c.MCPServers)
+		}
+	})
+
+	t.Run("command y url juntos es error", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "mcp.json")
+		_ = os.WriteFile(path, []byte(`{"mcpServers":{"x":{"command":"npx","url":"https://x/mcp"}}}`), 0o644)
+		if _, err := LoadFile(path); err == nil {
+			t.Fatal("esperaba error: command y url son mutuamente excluyentes")
+		}
+	})
+
+	t.Run("sin command ni url es error", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "mcp.json")
+		_ = os.WriteFile(path, []byte(`{"mcpServers":{"x":{"env":{"K":"V"}}}}`), 0o644)
+		if _, err := LoadFile(path); err == nil {
+			t.Fatal("esperaba error por transporte ausente")
+		}
+	})
+
 	t.Run("JSON roto es error", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "mcp.json")
 		_ = os.WriteFile(path, []byte("{roto"), 0o644)

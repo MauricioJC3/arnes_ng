@@ -17,40 +17,49 @@ type ToolInfo struct {
 // Client is a live connection to one MCP server.
 type Client struct {
 	server string
-	conn   *conn
+	rt     transport
 	tools  []ToolInfo
 }
 
-// Dial launches the server described by cfg and completes the handshake.
+// Dial connects to the server described by cfg (stdio or Streamable HTTP) and
+// completes the handshake.
 func Dial(ctx context.Context, server string, cfg ServerConfig) (*Client, error) {
-	cn, err := spawn(ctx, cfg)
+	var (
+		rt  transport
+		err error
+	)
+	if cfg.URL != "" {
+		rt, err = dialHTTP(ctx, cfg.URL)
+	} else {
+		rt, err = spawn(ctx, cfg)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("mcp %s: no arrancó: %w", server, err)
 	}
-	c, err := newClient(ctx, server, cn)
+	c, err := newClient(ctx, server, rt)
 	if err != nil {
-		cn.close()
+		rt.close()
 		return nil, err
 	}
 	return c, nil
 }
 
-// newClient runs initialize + tools/list over an already-open conn. Split out
-// from Dial so tests can drive it with in-memory pipes.
-func newClient(ctx context.Context, server string, cn *conn) (*Client, error) {
+// newClient runs initialize + tools/list over an already-open transport. Split
+// out from Dial so tests can drive it with in-memory pipes or a test server.
+func newClient(ctx context.Context, server string, rt transport) (*Client, error) {
 	initParams := map[string]any{
 		"protocolVersion": protocolVersion,
 		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]any{"name": "arnes", "version": "0.1"},
 	}
-	if _, err := cn.call(ctx, "initialize", initParams); err != nil {
+	if _, err := rt.call(ctx, "initialize", initParams); err != nil {
 		return nil, fmt.Errorf("mcp %s: initialize falló: %w", server, err)
 	}
-	if err := cn.notify("notifications/initialized", nil); err != nil {
+	if err := rt.notify("notifications/initialized", nil); err != nil {
 		return nil, fmt.Errorf("mcp %s: %w", server, err)
 	}
 
-	res, err := cn.call(ctx, "tools/list", map[string]any{})
+	res, err := rt.call(ctx, "tools/list", map[string]any{})
 	if err != nil {
 		return nil, fmt.Errorf("mcp %s: tools/list falló: %w", server, err)
 	}
@@ -65,7 +74,7 @@ func newClient(ctx context.Context, server string, cn *conn) (*Client, error) {
 		return nil, fmt.Errorf("mcp %s: tools/list ilegible: %w", server, err)
 	}
 
-	c := &Client{server: server, conn: cn}
+	c := &Client{server: server, rt: rt}
 	for _, t := range listed.Tools {
 		c.tools = append(c.tools, ToolInfo{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema})
 	}
@@ -84,7 +93,7 @@ func (c *Client) Call(ctx context.Context, tool string, args json.RawMessage) (s
 	if len(args) > 0 {
 		arguments = json.RawMessage(args)
 	}
-	res, err := c.conn.call(ctx, "tools/call", map[string]any{"name": tool, "arguments": arguments})
+	res, err := c.rt.call(ctx, "tools/call", map[string]any{"name": tool, "arguments": arguments})
 	if err != nil {
 		return "", err
 	}
@@ -112,5 +121,5 @@ func (c *Client) Call(ctx context.Context, tool string, args json.RawMessage) (s
 	return b.String(), nil
 }
 
-// Close shuts down the server process.
-func (c *Client) Close() error { return c.conn.close() }
+// Close shuts down the server process or HTTP session.
+func (c *Client) Close() error { return c.rt.close() }

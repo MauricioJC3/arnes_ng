@@ -112,6 +112,48 @@ func TestPostTool(t *testing.T) {
 	}
 }
 
+func TestStop(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("corre los stop hooks y devuelve su salida", func(t *testing.T) {
+		c, err := LoadFile(write(t, `{"stop":[{"command":"echo barrido final"}]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		note := New(c, time.Second).Stop(ctx)
+		if !strings.Contains(note, "barrido final") {
+			t.Fatalf("note = %q", note)
+		}
+	})
+
+	t.Run("sin stop hooks: nota vacía y config no vacía por pre_tool", func(t *testing.T) {
+		c, err := LoadFile(write(t, `{"pre_tool":[{"command":"true"}]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := New(c, time.Second).Stop(ctx); n != "" {
+			t.Fatalf("esperaba nota vacía, tengo %q", n)
+		}
+	})
+
+	t.Run("match se evalúa contra la tool literal \"Stop\"", func(t *testing.T) {
+		c, err := LoadFile(write(t, `{"stop":[{"match":"^Stop$","command":"echo ok"},{"match":"^edit_file$","command":"echo no"}]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		note := New(c, time.Second).Stop(ctx)
+		if !strings.Contains(note, "ok") || strings.Contains(note, "no") {
+			t.Fatalf("note = %q", note)
+		}
+	})
+
+	t.Run("match inválido en stop es error de carga", func(t *testing.T) {
+		if _, err := LoadFile(write(t, `{"stop":[{"match":"[","command":"true"}]}`)); err == nil {
+			t.Fatal("esperaba error de regex")
+		}
+	})
+}
+
 func TestRunTimeout(t *testing.T) {
 	c, err := LoadFile(write(t, `{"pre_tool":[{"command":"sleep 10"}]}`))
 	if err != nil {

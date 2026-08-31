@@ -1,7 +1,8 @@
 // Package hook runs user-configured shell commands around tool calls: a
 // pre-tool hook can block a call (e.g. run tests before `git commit`), a
-// post-tool hook reacts to one (e.g. `gofmt -w` after an edit). Hooks are
-// declared in ~/.arnes/hooks.json.
+// post-tool hook reacts to one (e.g. `gofmt -w` after an edit), and a stop hook
+// runs once the turn's final message is ready (e.g. a whole-project lint pass).
+// Hooks are declared in ~/.arnes/hooks.json.
 package hook
 
 import (
@@ -48,6 +49,9 @@ func (h Hook) matches(tool string) bool {
 type Config struct {
 	PreTool  []Hook `json:"pre_tool"`
 	PostTool []Hook `json:"post_tool"`
+	// Stop hooks run after a turn's final model message, once the completion
+	// gate has passed. Their `match` is tested against the literal name "Stop".
+	Stop []Hook `json:"stop"`
 }
 
 // DefaultPath is ~/.arnes/hooks.json.
@@ -78,6 +82,9 @@ func LoadFile(path string) (Config, error) {
 	if err := compile(c.PostTool); err != nil {
 		return Config{}, err
 	}
+	if err := compile(c.Stop); err != nil {
+		return Config{}, err
+	}
 	return c, nil
 }
 
@@ -99,7 +106,9 @@ func compile(hooks []Hook) error {
 }
 
 // Empty reports whether there are no hooks at all.
-func (c Config) Empty() bool { return len(c.PreTool) == 0 && len(c.PostTool) == 0 }
+func (c Config) Empty() bool {
+	return len(c.PreTool) == 0 && len(c.PostTool) == 0 && len(c.Stop) == 0
+}
 
 // Runner executes the configured hooks. It implements agent.Hooks.
 type Runner struct {
@@ -157,6 +166,31 @@ func (r *Runner) PostTool(ctx context.Context, call provider.ToolCall, _ string,
 			notes = append(notes, fmt.Sprintf("%s: %v", h.Command, err))
 		case out != "":
 			notes = append(notes, fmt.Sprintf("%s: %s", h.Command, out))
+		}
+	}
+	return strings.Join(notes, "\n")
+}
+
+// Stop runs every matching stop hook in order and returns their combined
+// output, to be fed back to the model as a note. Stop hooks are not bound to a
+// tool call; their `match` is tested against the literal name "Stop", and each
+// gets the JSON {"tool":"Stop","input":null} on stdin.
+func (r *Runner) Stop(ctx context.Context) string {
+	call := provider.ToolCall{Name: "Stop"}
+	var notes []string
+	for _, h := range r.cfg.Stop {
+		if !h.matches(call.Name) {
+			continue
+		}
+		out, err := r.run(ctx, h, call)
+		out = strings.TrimSpace(out)
+		switch {
+		case err != nil && out != "":
+			notes = append(notes, fmt.Sprintf("%s (exit != 0): %s", h.Command, out))
+		case err != nil:
+			notes = append(notes, fmt.Sprintf("%s: %v", h.Command, err))
+		case out != "":
+			notes = append(notes, out)
 		}
 	}
 	return strings.Join(notes, "\n")
