@@ -1,5 +1,6 @@
 // Package mcp connects the harness to external Model Context Protocol servers
-// (stdio transport) and exposes their tools as native tool.Tool values.
+// over stdio or Streamable HTTP and exposes their tools as native tool.Tool
+// values.
 package mcp
 
 import (
@@ -13,11 +14,14 @@ import (
 // protocolVersion is the MCP revision the harness advertises in `initialize`.
 const protocolVersion = "2025-06-18"
 
-// ServerConfig describes how to launch one stdio MCP server.
+// ServerConfig describes one MCP server. Exactly one transport must be set:
+// Command (+Args/Env) launches a stdio server; URL points at a Streamable HTTP
+// endpoint.
 type ServerConfig struct {
-	Command string            `json:"command"`
+	Command string            `json:"command,omitempty"`
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
+	URL     string            `json:"url,omitempty"`
 }
 
 // Config is the mcp.json shape (compatible with the common `mcpServers` key).
@@ -48,8 +52,11 @@ func LoadFile(path string) (Config, error) {
 		return Config{}, fmt.Errorf("%s inválido: %w", path, err)
 	}
 	for name, sc := range c.MCPServers {
-		if sc.Command == "" {
-			return Config{}, fmt.Errorf("servidor MCP %q sin 'command'", name)
+		switch {
+		case sc.Command == "" && sc.URL == "":
+			return Config{}, fmt.Errorf("servidor MCP %q: falta 'command' o 'url'", name)
+		case sc.Command != "" && sc.URL != "":
+			return Config{}, fmt.Errorf("servidor MCP %q: 'command' y 'url' son mutuamente excluyentes", name)
 		}
 	}
 	return c, nil

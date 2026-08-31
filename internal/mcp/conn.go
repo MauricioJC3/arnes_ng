@@ -40,6 +40,14 @@ type rpcError struct {
 
 func (e *rpcError) Error() string { return fmt.Sprintf("MCP error %d: %s", e.Code, e.Message) }
 
+// transport is one JSON-RPC channel to a server, regardless of wire: stdio
+// (*conn) or Streamable HTTP (*httpConn).
+type transport interface {
+	call(ctx context.Context, method string, params any) (json.RawMessage, error)
+	notify(method string, params any) error
+	close() error
+}
+
 // conn is a synchronous newline-delimited JSON-RPC channel to one server.
 // Only one request is in flight at a time (the harness makes blocking calls).
 type conn struct {
