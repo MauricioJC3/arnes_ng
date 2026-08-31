@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"time"
+
+	"github.com/MauricioJC3/arnes_ng/internal/shell"
 )
 
 // Bash timeout bounds. DefaultBashTimeout applies when a call omits
@@ -17,9 +18,10 @@ const (
 	MaxBashTimeout     = 10 * time.Minute
 )
 
-// Bash runs a shell command via `bash -c` and returns its combined output.
-// A non-zero exit code is a normal result (reported in the output), not a
-// tool failure.
+// Bash runs a shell command through the platform interpreter (`bash -c` on
+// Unix, PowerShell on Windows; overridable with $ARNES_SHELL) and returns its
+// combined output. A non-zero exit code is a normal result (reported in the
+// output), not a tool failure.
 type Bash struct {
 	// Timeout is the fallback bound when a call omits `timeout_seconds`.
 	// Zero means DefaultBashTimeout.
@@ -29,13 +31,18 @@ type Bash struct {
 func (Bash) Name() string { return "bash" }
 
 func (Bash) Description() string {
-	return "Ejecuta un comando de shell con `bash -c` y devuelve su salida combinada " +
-		"(stdout + stderr). Usala para EJECUTAR cosas: tests, build, git, binarios, " +
+	base := "Ejecuta un comando de shell con `" + shell.Label() + "` y devuelve su salida " +
+		"combinada (stdout + stderr). Usala para EJECUTAR cosas: tests, build, git, binarios, " +
 		"instaladores. Para BUSCAR texto usá grep, y para encontrar archivos usá glob " +
 		"(no `grep`/`find`/`rg` por acá). Un exit code distinto de cero no es un error de " +
 		"la herramienta: se anexa a la salida y vos decidís cómo seguir. El comando se " +
 		"corta a los 120s por defecto; pasá `timeout_seconds` (máx. 600) para builds, " +
 		"instalaciones o suites de tests que legítimamente tarden más."
+	if !shell.POSIX() {
+		base += " OJO: la shell es PowerShell — encadená con `;` (no `&&`), y para escribir " +
+			"archivos usá write_file, no redirección `>` (PowerShell 5.1 escribe UTF-16 con BOM)."
+	}
+	return base
 }
 
 func (Bash) InputSchema() map[string]any {
@@ -73,7 +80,7 @@ func (b Bash) Execute(ctx context.Context, input json.RawMessage) (string, error
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", in.Command)
+	cmd := shell.CommandContext(ctx, in.Command)
 	hardenCmd(cmd) // own process group + bounded wait, so a cancel actually kills it
 	out, err := cmd.CombinedOutput()
 	result := string(out)

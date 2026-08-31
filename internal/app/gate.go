@@ -2,11 +2,11 @@ package app
 
 import (
 	"context"
-	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/MauricioJC3/arnes_ng/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/shell"
 	"github.com/MauricioJC3/arnes_ng/internal/todo"
 )
 
@@ -18,8 +18,8 @@ const checkTimeout = 5 * time.Minute
 const checkOutputCap = 16_000
 
 // verifier builds the completion-gate check from the configured command, or nil
-// when none is set. It shells out with `bash -c`, returns the combined output
-// and whether the command exited 0.
+// when none is set. It shells out through the platform interpreter (see
+// internal/shell), returns the combined output and whether the command exited 0.
 func (a *App) verifier() func(context.Context) (string, bool) {
 	cmd := strings.TrimSpace(a.checkCommand)
 	if cmd == "" {
@@ -28,7 +28,7 @@ func (a *App) verifier() func(context.Context) (string, bool) {
 	return func(ctx context.Context) (string, bool) {
 		ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 		defer cancel()
-		out, err := exec.CommandContext(ctx, "bash", "-c", cmd).CombinedOutput()
+		out, err := shell.CommandContext(ctx, cmd).CombinedOutput()
 		s := string(out)
 		if len(s) > checkOutputCap {
 			s = "[... salida recortada; se conserva el final ...]\n" + s[len(s)-checkOutputCap:]

@@ -12,13 +12,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/MauricioJC3/arnes_ng/internal/provider"
+	"github.com/MauricioJC3/arnes_ng/internal/shell"
 )
 
 // Hook is one command bound to a set of tools by a name regex.
@@ -202,7 +202,7 @@ func (r *Runner) run(ctx context.Context, h Hook, call provider.ToolCall) (strin
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", h.Command)
+	cmd := shell.CommandContext(ctx, h.Command)
 	cmd.Dir = r.dir
 	cmd.Stdin = bytes.NewReader(payload(call))
 	cmd.Env = append(os.Environ(), "ARNES_TOOL_NAME="+call.Name)
