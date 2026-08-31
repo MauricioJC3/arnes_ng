@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -144,7 +145,28 @@ func (f *modelForm) update(msg tea.KeyMsg) (done *modelResult, cancelled bool) {
 	return nil, false
 }
 
-func (f *modelForm) view(s Styles) string {
+// visibleWindow returns the [top, end) slice of rows to render so the selection
+// (f.idx) always stays on screen, scrolling when the list is taller than
+// maxRows. With maxRows >= len(rows) the whole list shows.
+func (f *modelForm) visibleWindow(maxRows int) (top, end int) {
+	n := len(f.rows)
+	if maxRows < 1 {
+		maxRows = 1
+	}
+	if maxRows >= n {
+		return 0, n
+	}
+	top = f.idx - maxRows/2
+	if top < 0 {
+		top = 0
+	}
+	if top > n-maxRows {
+		top = n - maxRows
+	}
+	return top, top + maxRows
+}
+
+func (f *modelForm) view(s Styles, maxRows int) string {
 	if f.loading {
 		return s.Accent.Render("modelo") + "\n\n" + s.Muted.Render("buscando modelos…")
 	}
@@ -167,14 +189,21 @@ func (f *modelForm) view(s Styles) string {
 		}
 		return "  "
 	}
+
+	top, end := f.visibleWindow(maxRows)
+	if top > 0 {
+		b.WriteString(s.Muted.Render(fmt.Sprintf("  ↑ %d más", top)) + "\n")
+	}
 	lastProv := ""
-	for i, r := range f.rows {
+	for i := top; i < end; i++ {
+		r := f.rows[i]
 		if r.manual {
 			b.WriteString(cur(i == f.idx) + "✎ escribir a mano  " + s.Muted.Render("("+f.active+")") + "\n")
 			continue
 		}
 		if r.provider != lastProv {
-			b.WriteString(s.Muted.Render(r.provider) + "\n")
+			// header aligned to the same 2-col gutter as the model rows
+			b.WriteString("  " + s.Muted.Render(r.provider) + "\n")
 			lastProv = r.provider
 		}
 		line := r.model
@@ -182,6 +211,9 @@ func (f *modelForm) view(s Styles) string {
 			line += s.Muted.Render("  ● actual")
 		}
 		b.WriteString(cur(i == f.idx) + line + "\n")
+	}
+	if end < len(f.rows) {
+		b.WriteString(s.Muted.Render(fmt.Sprintf("  ↓ %d más", len(f.rows)-end)) + "\n")
 	}
 	b.WriteString("\n" + s.Muted.Render("↑↓ elegir · enter · esc cancela"))
 	return b.String()
