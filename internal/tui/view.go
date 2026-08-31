@@ -79,7 +79,7 @@ func (m Model) View() string {
 	case stateConnectForm:
 		foot = m.formBox(m.connect.view(m.styles), m.theme.Accent)
 	case stateModelForm:
-		foot = m.formBox(m.model.view(m.styles), m.theme.Accent)
+		foot = m.formBox(m.model.view(m.styles, m.modelRows()), m.theme.Accent)
 	case stateSessionForm:
 		foot = m.formBox(m.session.view(m.styles), m.theme.Accent)
 	case stateApproval:
@@ -183,6 +183,20 @@ func (m Model) menuView() string {
 }
 
 // formBox wraps a multi-step form (e.g. /connect) in a bordered box.
+// modelRows is how many model entries the picker shows at once, scaled to the
+// terminal height with room left for the box border, title, notes and hints.
+// The list scrolls inside this window instead of overflowing the screen.
+func (m Model) modelRows() int {
+	n := m.height - 12
+	if n < 6 {
+		return 6
+	}
+	if n > 16 {
+		return 16
+	}
+	return n
+}
+
 func (m Model) formBox(body, borderColor string) string {
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
