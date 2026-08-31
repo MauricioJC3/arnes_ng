@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -120,6 +121,47 @@ func TestConnectFormManualModel(t *testing.T) {
 	done, cancelled, _ := f.update(key("enter"))
 	if cancelled || done == nil || done.model != "modelo-raro-9000" || done.provider != "anthropic" || done.key != "sk-1" {
 		t.Fatalf("resultado = %+v cancelled=%v", done, cancelled)
+	}
+}
+
+// TestConnectFormModelStepScrolls checks the model picker windows a long live
+// list so the selected row and its ❯ never overflow the screen (the bug the
+// /model picker already fixed, ported here).
+func TestConnectFormModelStepScrolls(t *testing.T) {
+	f := newConnectForm()
+	f.provider = "openai"
+	f.step = stepModel
+
+	models := make([]string, 40)
+	for i := range models {
+		models[i] = "gpt-" + itoa(i)
+	}
+	f.setModels(models, nil)
+	s := DefaultTheme().Styles()
+
+	// "↑ " (flecha + espacio) solo aparece en el marcador de scroll hacia
+	// arriba; la pista del pie usa "↑↓" pegadas. " más" solo aparece en un
+	// marcador (las filas dicen "N msg", no "más").
+	const upMark, anyMark = "↑ ", " más"
+
+	// Cerca del final: se ve el modelo elegido y el marcador "↑".
+	f.modelIdx = len(f.models) - 2
+	out := f.view(s, 8)
+	if !strings.Contains(out, f.models[f.modelIdx]) {
+		t.Fatalf("la vista no muestra el modelo seleccionado:\n%s", out)
+	}
+	if !strings.Contains(out, upMark) {
+		t.Fatalf("esperaba el marcador de scroll hacia arriba:\n%s", out)
+	}
+	if strings.Count(out, "\n") > 16 {
+		t.Fatalf("la vista sigue siendo demasiado alta (%d líneas)", strings.Count(out, "\n"))
+	}
+
+	// Cerca del inicio: hay un marcador (hacia abajo) pero no el de "↑".
+	f.modelIdx = 0
+	out = f.view(s, 8)
+	if strings.Contains(out, upMark) || !strings.Contains(out, anyMark) {
+		t.Fatalf("esperaba solo el marcador hacia abajo:\n%s", out)
 	}
 }
 

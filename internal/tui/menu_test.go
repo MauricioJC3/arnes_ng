@@ -61,4 +61,19 @@ func TestCommandMenu(t *testing.T) {
 			t.Fatalf("selected = %+v %v", s, ok)
 		}
 	})
+
+	t.Run("la ventana sigue a la selección cuando hay más de maxMenuRows", func(t *testing.T) {
+		mn.update("/")
+		if len(mn.items) <= maxMenuRows {
+			t.Skipf("solo hay %d comandos; el test necesita más de %d", len(mn.items), maxMenuRows)
+		}
+		mn.idx = len(mn.items) - 1
+		top, end := mn.visibleWindow()
+		if mn.idx < top || mn.idx >= end {
+			t.Fatalf("la selección %d quedó fuera de la ventana [%d,%d)", mn.idx, top, end)
+		}
+		if end-top != maxMenuRows {
+			t.Fatalf("ventana de %d filas, esperaba %d", end-top, maxMenuRows)
+		}
+	})
 }

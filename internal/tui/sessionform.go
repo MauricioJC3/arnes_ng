@@ -79,7 +79,10 @@ func (f *sessionForm) update(msg tea.KeyMsg) (done *sessionResult, cancelled boo
 	return nil, false
 }
 
-func (f *sessionForm) view(s Styles) string {
+// view renders the picker. maxRows is how many session entries fit at once
+// (each entry is two lines); the list scrolls inside that window so the
+// selected row and its ❯ never overflow the screen.
+func (f *sessionForm) view(s Styles, maxRows int) string {
 	var b strings.Builder
 	b.WriteString(s.Accent.Render("reanudar una sesión") + "\n")
 	if f.note != "" {
@@ -93,7 +96,12 @@ func (f *sessionForm) view(s Styles) string {
 		}
 		return "  "
 	}
-	for i, r := range f.rows {
+	top, end := listWindow(f.idx, len(f.rows), maxRows)
+	if top > 0 {
+		b.WriteString(s.Muted.Render(fmt.Sprintf("  ↑ %d más", top)) + "\n")
+	}
+	for i := top; i < end; i++ {
+		r := f.rows[i]
 		line := r.title + s.Muted.Render(fmt.Sprintf("  %d msg", r.msgs))
 		if r.todo != "" {
 			line += s.Muted.Render("  · " + r.todo)
@@ -103,6 +111,9 @@ func (f *sessionForm) view(s Styles) string {
 		}
 		b.WriteString(cur(i == f.idx) + line + "\n")
 		b.WriteString("    " + s.Muted.Render(r.id+"  "+humanAge(r.updated)) + "\n")
+	}
+	if end < len(f.rows) {
+		b.WriteString(s.Muted.Render(fmt.Sprintf("  ↓ %d más", len(f.rows)-end)) + "\n")
 	}
 	b.WriteString("\n" + s.Muted.Render("↑↓ elegir · enter reanuda · esc cancela"))
 	return b.String()

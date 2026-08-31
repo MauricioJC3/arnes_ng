@@ -45,6 +45,12 @@ func (mn *commandMenu) move(delta int) {
 	mn.idx = (mn.idx + delta%n + n) % n
 }
 
+// visibleWindow is the [top, end) slice of matches to render so the highlighted
+// row stays on screen when more than maxMenuRows commands match.
+func (mn *commandMenu) visibleWindow() (top, end int) {
+	return listWindow(mn.idx, len(mn.items), maxMenuRows)
+}
+
 func (mn *commandMenu) selected() (command.Spec, bool) {
 	if !mn.open || mn.idx >= len(mn.items) {
 		return command.Spec{}, false

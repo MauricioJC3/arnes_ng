@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -183,7 +184,7 @@ func (f *connectForm) setModels(models []string, err error) {
 	f.modelIdx = 0
 }
 
-func (f *connectForm) view(s Styles) string {
+func (f *connectForm) view(s Styles, maxRows int) string {
 	switch f.step {
 	case stepProvider:
 		var b strings.Builder
@@ -220,12 +221,20 @@ func (f *connectForm) view(s Styles) string {
 			b.WriteString(s.Muted.Render("("+f.note+")") + "\n")
 		}
 		b.WriteString("\n")
-		for i, name := range f.models {
+		top, end := listWindow(f.modelIdx, len(f.models), maxRows)
+		if top > 0 {
+			b.WriteString(s.Muted.Render(fmt.Sprintf("  ↑ %d más", top)) + "\n")
+		}
+		for i := top; i < end; i++ {
+			name := f.models[i]
 			if i == f.modelIdx {
 				b.WriteString(s.Accent.Render("❯ ") + s.User.Render(name) + "\n")
 			} else {
 				b.WriteString("  " + name + "\n")
 			}
+		}
+		if end < len(f.models) {
+			b.WriteString(s.Muted.Render(fmt.Sprintf("  ↓ %d más", len(f.models)-end)) + "\n")
 		}
 		b.WriteString("\n" + s.Muted.Render("↑↓ elegir · enter · esc cancela"))
 		return b.String()

@@ -121,6 +121,38 @@ func TestSessionPickerResumesOnEnter(t *testing.T) {
 	}
 }
 
+// TestSessionFormViewScrolls checks the resume picker windows a long session
+// list so the selected row and its ❯ stay on screen in both directions.
+func TestSessionFormViewScrolls(t *testing.T) {
+	metas := make([]session.Meta, 30)
+	for i := range metas {
+		metas[i] = session.Meta{ID: "id-" + itoa(i), Title: "sesión " + itoa(i), Messages: i}
+	}
+	f := newSessionForm(metas, "id-0")
+	s := DefaultTheme().Styles()
+
+	// "↑ " (flecha + espacio) solo aparece en el marcador hacia arriba; la
+	// pista del pie usa "↑↓" pegadas. " más" solo aparece en un marcador.
+	const upMark, anyMark = "↑ ", " más"
+
+	// Cerca del final: se ve la fila elegida y el marcador "↑".
+	f.idx = len(f.rows) - 1
+	out := f.view(s, 6)
+	if !strings.Contains(out, f.rows[f.idx].title) {
+		t.Fatalf("la vista no muestra la sesión seleccionada:\n%s", out)
+	}
+	if !strings.Contains(out, upMark) {
+		t.Fatalf("esperaba el marcador de scroll hacia arriba:\n%s", out)
+	}
+
+	// Cerca del inicio: hay un marcador (hacia abajo) pero no el de "↑".
+	f.idx = 0
+	out = f.view(s, 6)
+	if strings.Contains(out, upMark) || !strings.Contains(out, anyMark) {
+		t.Fatalf("esperaba solo el marcador hacia abajo:\n%s", out)
+	}
+}
+
 func TestSessionPickerEscClosesIt(t *testing.T) {
 	m := openSessionPicker(t, &fakeSessionsConv{metas: threeMetas()})
 	tm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})

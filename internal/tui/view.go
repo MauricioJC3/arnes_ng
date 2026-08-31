@@ -77,11 +77,11 @@ func (m Model) View() string {
 	var foot string
 	switch m.state() {
 	case stateConnectForm:
-		foot = m.formBox(m.connect.view(m.styles), m.theme.Accent)
+		foot = m.formBox(m.connect.view(m.styles, m.modelRows()), m.theme.Accent)
 	case stateModelForm:
 		foot = m.formBox(m.model.view(m.styles, m.modelRows()), m.theme.Accent)
 	case stateSessionForm:
-		foot = m.formBox(m.session.view(m.styles), m.theme.Accent)
+		foot = m.formBox(m.session.view(m.styles, m.sessionRows()), m.theme.Accent)
 	case stateApproval:
 		foot = m.approvalBox()
 	case stateBusy:
@@ -158,11 +158,13 @@ func (m Model) todoLine(it todo.Item) string {
 // menuView renders the "/…" autocomplete list.
 func (m Model) menuView() string {
 	items := m.menu.items
-	if len(items) > maxMenuRows {
-		items = items[:maxMenuRows]
-	}
+	top, end := m.menu.visibleWindow()
 	var b strings.Builder
-	for i, c := range items {
+	if top > 0 {
+		b.WriteString("  " + m.styles.Muted.Render(fmt.Sprintf("↑ %d más", top)) + "\n")
+	}
+	for i := top; i < end; i++ {
+		c := items[i]
 		label := c.Name
 		if c.Args != "" {
 			label += " " + c.Args
@@ -174,6 +176,9 @@ func (m Model) menuView() string {
 			b.WriteString("  " + m.styles.Muted.Render(label))
 		}
 		b.WriteByte('\n')
+	}
+	if end < len(items) {
+		b.WriteString("  " + m.styles.Muted.Render(fmt.Sprintf("↓ %d más", len(items)-end)) + "\n")
 	}
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -193,6 +198,20 @@ func (m Model) modelRows() int {
 	}
 	if n > 16 {
 		return 16
+	}
+	return n
+}
+
+// sessionRows is how many entries the /sessions picker shows at once. Each
+// entry is two lines, so it gets roughly half the model picker's budget; the
+// list scrolls inside that window instead of overflowing the screen.
+func (m Model) sessionRows() int {
+	n := (m.height - 12) / 2
+	if n < 4 {
+		return 4
+	}
+	if n > 10 {
+		return 10
 	}
 	return n
 }

@@ -149,21 +149,7 @@ func (f *modelForm) update(msg tea.KeyMsg) (done *modelResult, cancelled bool) {
 // (f.idx) always stays on screen, scrolling when the list is taller than
 // maxRows. With maxRows >= len(rows) the whole list shows.
 func (f *modelForm) visibleWindow(maxRows int) (top, end int) {
-	n := len(f.rows)
-	if maxRows < 1 {
-		maxRows = 1
-	}
-	if maxRows >= n {
-		return 0, n
-	}
-	top = f.idx - maxRows/2
-	if top < 0 {
-		top = 0
-	}
-	if top > n-maxRows {
-		top = n - maxRows
-	}
-	return top, top + maxRows
+	return listWindow(f.idx, len(f.rows), maxRows)
 }
 
 func (f *modelForm) view(s Styles, maxRows int) string {
