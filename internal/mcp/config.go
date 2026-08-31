@@ -38,6 +38,26 @@ func DefaultPath() (string, error) {
 	return filepath.Join(home, ".arnes", "mcp.json"), nil
 }
 
+// ResolvePath returns the mcp.json path in effect: $ARNES_MCP when set,
+// otherwise DefaultPath.
+func ResolvePath() (string, error) {
+	if p := os.Getenv("ARNES_MCP"); p != "" {
+		return p, nil
+	}
+	return DefaultPath()
+}
+
+// validate reports whether one server entry has exactly one transport set.
+func validate(name string, sc ServerConfig) error {
+	switch {
+	case sc.Command == "" && sc.URL == "":
+		return fmt.Errorf("servidor MCP %q: falta 'command' o 'url'", name)
+	case sc.Command != "" && sc.URL != "":
+		return fmt.Errorf("servidor MCP %q: 'command' y 'url' son mutuamente excluyentes", name)
+	}
+	return nil
+}
+
 // LoadFile reads mcp.json. A missing file yields an empty config (no servers).
 func LoadFile(path string) (Config, error) {
 	data, err := os.ReadFile(path)
@@ -52,14 +72,63 @@ func LoadFile(path string) (Config, error) {
 		return Config{}, fmt.Errorf("%s inválido: %w", path, err)
 	}
 	for name, sc := range c.MCPServers {
-		switch {
-		case sc.Command == "" && sc.URL == "":
-			return Config{}, fmt.Errorf("servidor MCP %q: falta 'command' o 'url'", name)
-		case sc.Command != "" && sc.URL != "":
-			return Config{}, fmt.Errorf("servidor MCP %q: 'command' y 'url' son mutuamente excluyentes", name)
+		if err := validate(name, sc); err != nil {
+			return Config{}, err
 		}
 	}
 	return c, nil
+}
+
+// Save writes c to path as pretty JSON, creating the parent directory.
+func Save(path string, c Config) error {
+	if c.MCPServers == nil {
+		c.MCPServers = map[string]ServerConfig{}
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+// AddServer loads the config at path, adds server name, and saves. It errors if
+// name already exists or sc is not a valid single-transport entry.
+func AddServer(path, name string, sc ServerConfig) error {
+	if name == "" {
+		return errors.New("el nombre del servidor MCP no puede estar vacío")
+	}
+	if err := validate(name, sc); err != nil {
+		return err
+	}
+	c, err := LoadFile(path)
+	if err != nil {
+		return err
+	}
+	if c.MCPServers == nil {
+		c.MCPServers = map[string]ServerConfig{}
+	}
+	if _, exists := c.MCPServers[name]; exists {
+		return fmt.Errorf("el servidor MCP %q ya está configurado", name)
+	}
+	c.MCPServers[name] = sc
+	return Save(path, c)
+}
+
+// RemoveServer loads the config at path, drops server name, and saves. It errors
+// if name is not present.
+func RemoveServer(path, name string) error {
+	c, err := LoadFile(path)
+	if err != nil {
+		return err
+	}
+	if _, exists := c.MCPServers[name]; !exists {
+		return fmt.Errorf("no hay un servidor MCP llamado %q", name)
+	}
+	delete(c.MCPServers, name)
+	return Save(path, c)
 }
 
 func envSlice(m map[string]string) []string {
