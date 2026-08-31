@@ -98,6 +98,15 @@ type Rewinder interface {
 	Rewind(n int) (string, error)
 }
 
+// MCPAdmin is implemented by a Conversation that can read and edit the MCP
+// server list (the /mcp command). Changes land in mcp.json and take effect on
+// the next arnes start.
+type MCPAdmin interface {
+	MCPList() (string, error)
+	MCPAdd(name, url string) (string, error)
+	MCPRemove(name string) (string, error)
+}
+
 // Spec describes one slash command, for /help and for the TUI autocomplete.
 type Spec struct {
 	Name  string // "/connect"
@@ -120,6 +129,7 @@ func Commands() []Spec {
 		{"/compact", "[estrategia]", "compacta el contexto (none|sliding|summarize)"},
 		{"/rewind", "[n]", "lista los checkpoints o vuelve al checkpoint n (historial + archivos)"},
 		{"/subagents", "", "lista los subagentes disponibles"},
+		{"/mcp", "[list | add <nombre> <url> | remove <nombre>]", "gestiona los servidores MCP (aplica al reiniciar)"},
 		{"/update-arnes", "", "busca e instala una versión nueva de arnes"},
 		{"/exit", "", "salir"},
 	}
@@ -292,6 +302,44 @@ func Dispatch(line string, conv Conversation, prov provider.Provider) (Result, e
 			return Result{Output: "no hay subagentes configurados"}, nil
 		}
 		return Result{Output: "  " + strings.Join(lines, "\n  ")}, nil
+
+	case "/mcp":
+		adm, ok := conv.(MCPAdmin)
+		if !ok {
+			return Result{}, errors.New("este arnés no gestiona servidores MCP")
+		}
+		sub := "list"
+		if len(fields) >= 2 {
+			sub = fields[1]
+		}
+		switch sub {
+		case "list", "ls":
+			out, err := adm.MCPList()
+			if err != nil {
+				return Result{}, err
+			}
+			return Result{Output: out}, nil
+		case "add":
+			if len(fields) < 4 {
+				return Result{}, errors.New("uso: /mcp add <nombre> <url>")
+			}
+			out, err := adm.MCPAdd(fields[2], fields[3])
+			if err != nil {
+				return Result{}, err
+			}
+			return Result{Output: out}, nil
+		case "remove", "rm":
+			if len(fields) < 3 {
+				return Result{}, errors.New("uso: /mcp remove <nombre>")
+			}
+			out, err := adm.MCPRemove(fields[2])
+			if err != nil {
+				return Result{}, err
+			}
+			return Result{Output: out}, nil
+		default:
+			return Result{}, fmt.Errorf("subcomando /mcp desconocido: %s (list | add | remove)", sub)
+		}
 
 	case "/update-arnes", "/update":
 		up, ok := conv.(Updater)

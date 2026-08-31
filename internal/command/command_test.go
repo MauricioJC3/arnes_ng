@@ -12,15 +12,17 @@ import (
 
 // fakeApp implements Conversation + Sessions + Compaction + Subagents.
 type fakeApp struct {
-	metas     []session.Meta
-	resumed   string
-	newed     int
-	strategy  string
-	compacts  int
-	connected [3]string
-	mode      string
-	updated   int
-	curModel  string
+	metas      []session.Meta
+	resumed    string
+	newed      int
+	strategy   string
+	compacts   int
+	connected  [3]string
+	mode       string
+	updated    int
+	curModel   string
+	mcpAdded   [2]string
+	mcpRemoved string
 }
 
 func (*fakeApp) Run(context.Context, string) (string, error) { return "", nil }
@@ -57,6 +59,16 @@ func (f *fakeApp) KeyedProviders() []string { return []string{"deepseek", "anthr
 func (f *fakeApp) SetModel(m string) (string, error) {
 	f.curModel = m
 	return "modelo: " + m, nil
+}
+
+func (f *fakeApp) MCPList() (string, error) { return "  ui-skills  →  https://x/mcp", nil }
+func (f *fakeApp) MCPAdd(name, url string) (string, error) {
+	f.mcpAdded = [2]string{name, url}
+	return "agregado " + name, nil
+}
+func (f *fakeApp) MCPRemove(name string) (string, error) {
+	f.mcpRemoved = name
+	return "eliminado " + name, nil
 }
 
 func (f *fakeApp) Mode() string { return cmp.Or(f.mode, "normal") }
@@ -155,6 +167,51 @@ func TestDispatch(t *testing.T) {
 	t.Run("comando desconocido es error", func(t *testing.T) {
 		if _, err := Dispatch("/qwe", app, p); err == nil {
 			t.Fatal("esperaba error")
+		}
+	})
+
+	t.Run("/mcp sin args lista", func(t *testing.T) {
+		r, err := Dispatch("/mcp", app, p)
+		if err != nil || !strings.Contains(r.Output, "ui-skills") {
+			t.Fatalf("r=%+v err=%v", r, err)
+		}
+	})
+
+	t.Run("/mcp add pasa nombre y url", func(t *testing.T) {
+		r, err := Dispatch("/mcp add ui-skills https://www.ui-skills.com/mcp", app, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if app.mcpAdded != [2]string{"ui-skills", "https://www.ui-skills.com/mcp"} {
+			t.Fatalf("mcpAdded = %v", app.mcpAdded)
+		}
+		if !strings.Contains(r.Output, "agregado") {
+			t.Fatalf("output = %q", r.Output)
+		}
+	})
+
+	t.Run("/mcp add sin url es error de uso", func(t *testing.T) {
+		if _, err := Dispatch("/mcp add solo-nombre", app, p); err == nil {
+			t.Fatal("esperaba error de uso")
+		}
+	})
+
+	t.Run("/mcp remove delega", func(t *testing.T) {
+		Dispatch("/mcp remove ui-skills", app, p)
+		if app.mcpRemoved != "ui-skills" {
+			t.Fatalf("mcpRemoved = %q", app.mcpRemoved)
+		}
+	})
+
+	t.Run("/mcp subcomando raro es error", func(t *testing.T) {
+		if _, err := Dispatch("/mcp frobnicate", app, p); err == nil {
+			t.Fatal("esperaba error")
+		}
+	})
+
+	t.Run("/mcp sin soporte avisa", func(t *testing.T) {
+		if _, err := Dispatch("/mcp list", bareConv{}, p); err == nil {
+			t.Fatal("esperaba error 'no gestiona servidores MCP'")
 		}
 	})
 
